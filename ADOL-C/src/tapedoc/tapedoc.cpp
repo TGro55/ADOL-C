@@ -21,6 +21,7 @@
 #include <adolc/oplate.h>
 #include <adolc/tape_interface.h>
 #include <adolc/tapedoc/tapedoc.h>
+#include <adolc/valuetape/infotype.h>
 #include <adolc/valuetape/valuetape.h>
 #include <math.h>
 #include <string.h>
@@ -229,6 +230,9 @@ void tape_doc(short tnum,     /* tape id */
               const double *, /* independent variable values */
               double *)       /* dependent variable values */
 {
+  using LocInfo = LocInfo<TapeInfos, ErrorType>;
+  using OpInfo = OpInfo<TapeInfos, ErrorType>;
+  using ValInfo = ValInfo<TapeInfos, ErrorType>;
   /****************************************************************************/
   /*                                                            ALL VARIABLES */
   unsigned char operation;
@@ -299,7 +303,7 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case end_of_op: /* end_of_op */
       filewrite(operation, "end of op", 0, loc_a, 0, cst_d);
-      tape.get_op_block_f();
+      tape.loadBlockIntoBufferForward<OpInfo>();
       operation = tape.get_op_f();
       ++op_cnt;
       --rev_op_cnt;
@@ -309,13 +313,13 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case end_of_int: /* end_of_int */
       filewrite(operation, "end of int", 0, loc_a, 0, cst_d);
-      tape.get_loc_block_f();
+      tape.loadBlockIntoBufferForward<LocInfo>();
       break;
 
       /*--------------------------------------------------------------------------*/
     case end_of_val: /* end_of_val */
       filewrite(operation, "end of val", 0, loc_a, 0, cst_d);
-      tape.get_val_block_f();
+      tape.loadBlockIntoBufferForward<ValInfo>();
       break;
 
       /*--------------------------------------------------------------------------*/

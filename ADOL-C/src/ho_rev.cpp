@@ -206,9 +206,10 @@ results   Taylor-Jacobians       ------------          Taylor Jacobians
 #include <adolc/internal/common.h>
 #include <adolc/oplate.h>
 #include <adolc/tape_interface.h>
+#include <adolc/valuetape/infotype.h>
 #include <adolc/valuetape/valuetape.h>
 #include <cassert>
-#include <math.h>
+#include <cmath>
 
 #if defined(ADOLC_DEBUG)
 #include <string.h>
@@ -300,6 +301,9 @@ int hov_ti_reverse(
 #endif
 
 {
+  using ValInfo = ADOLC::detail::ValInfo<TapeInfos, ErrorType>;
+  using LocInfo = ADOLC::detail::LocInfo<TapeInfos, ErrorType>;
+  using OpInfo = ADOLC::detail::OpInfo<TapeInfos, ErrorType>;
   ValueTape &tape = findTape(tnum);
   /************************************************************************/
   /*                                                       ALL VARIABLES  */
@@ -490,19 +494,19 @@ int hov_ti_reverse(
 
       /*----------------------------------------------------------*/
     case end_of_op: /* end_of_op */
-      tape.get_op_block_r();
+      tape.loadBlockIntoBufferReverse<OpInfo>();
       operation = tape.get_op_r();
       /* Skip next operation, it's another end_of_op */
       break;
 
       /*----------------------------------------------------------*/
-    case end_of_int:          /* end_of_int */
-      tape.get_loc_block_r(); /* Get the next int block */
+    case end_of_int:                              /* end_of_int */
+      tape.loadBlockIntoBufferReverse<LocInfo>(); /* Get the next int block */
       break;
 
       /*----------------------------------------------------------*/
-    case end_of_val:          /* end_of_val */
-      tape.get_val_block_r(); /* Get the next val block */
+    case end_of_val:                              /* end_of_val */
+      tape.loadBlockIntoBufferReverse<ValInfo>(); /* Get the next val block */
       break;
 
       /*----------------------------------------------------------*/

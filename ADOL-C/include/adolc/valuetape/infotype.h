@@ -1,6 +1,7 @@
 
 #ifndef ADOLC_INFO_TYPE_H
 #define ADOLC_INFO_TYPE_H
+#include <adolc/adolcerror.h>
 #include <adolc/internal/usrparms.h> // ADOLC_IO_CHUNK_SIZE
 #include <concepts>
 #include <cstddef>
@@ -72,7 +73,7 @@ concept InfoTypeBase = requires(TInfos &tapeInfos, const char *fileName) {
   { T::bufferBegin(tapeInfos) } -> std::same_as<typename T::value_type *>;
 
   // map generic “current pointer” and “count” operations to TInfos fields
-  T::setCurr(tapeInfos, size_t{});
+  T::setPosition(tapeInfos, size_t{});
   T::setNum(tapeInfos, size_t{});
   { T::getNum(tapeInfos) };
 
@@ -100,15 +101,6 @@ template <class T, class TInfos, class ErrorType>
 concept InfoType =
     InfoTypeBase<T, TInfos, ErrorType> && HasFileAccessEntry<T, TInfos>;
 
-/// Wrapper for fread
-template <typename TInfos, typename ErrorType,
-          InfoTypeBase<TInfos, ErrorType> Info>
-static size_t read(TInfos &tapeInfos, size_t chunk, size_t size) {
-  return fread(Info::bufferBegin(tapeInfos) + (chunk * Info::chunkSize),
-               size * sizeof(typename Info::value_type), 1,
-               Info::file(tapeInfos));
-}
-
 /// Wrapper of fread
 template <typename TInfos, typename ErrorType,
           InfoTypeBase<TInfos, ErrorType> Info>
@@ -135,7 +127,7 @@ template <class TInfos, class EType> struct OpInfo {
   static const StatEntries fileAccess = TInfos::OP_FILE_ACCESS;
   static const StatEntries bufferSize = TInfos::OP_BUFFER_SIZE;
 
-  static constexpr EType error = EType::EVAL_OP_TAPE_READ_FAILED;
+  static constexpr EType error = EType::OP_READ_FAILED;
 
   static constexpr size_t chunkSize = ADOLC_IO_CHUNK_SIZE / sizeof(value_type);
 
@@ -145,7 +137,7 @@ template <class TInfos, class EType> struct OpInfo {
   static size_t getNum(TInfos &tapeInfos) {
     return tapeInfos.opBuffer_.numOnTape();
   }
-  static void setCurr(TInfos &tapeInfos, size_t loc) {
+  static void setPosition(TInfos &tapeInfos, size_t loc) {
     tapeInfos.opBuffer_.position(loc);
   }
 
@@ -175,7 +167,7 @@ template <class TInfos, class EType> struct LocInfo {
   static const StatEntries fileAccess = TInfos::LOC_FILE_ACCESS;
   static const StatEntries bufferSize = TInfos::LOC_BUFFER_SIZE;
 
-  static constexpr EType error = EType::EVAL_LOC_TAPE_READ_FAILED;
+  static constexpr EType error = EType::LOC_READ_FAILED;
 
   static constexpr size_t chunkSize = ADOLC_IO_CHUNK_SIZE / sizeof(value_type);
 
@@ -185,8 +177,12 @@ template <class TInfos, class EType> struct LocInfo {
   static size_t getNum(TInfos &tapeInfos) {
     return tapeInfos.locBuffer_.numOnTape();
   }
-  static void setCurr(TInfos &tapeInfos, size_t loc) {
+  static void setPosition(TInfos &tapeInfos, size_t loc) {
     tapeInfos.locBuffer_.position(loc);
+  }
+
+  static size_t getBufferVal(TInfos &tapeInfos, size_t loc) {
+    return tapeInfos.locBuffer_[loc];
   }
 
   static value_type *bufferBegin(TInfos &tapeInfos) {
@@ -216,7 +212,7 @@ template <class TInfos, class EType> struct ValInfo {
 
   static const StatEntries bufferSize = TInfos::VAL_BUFFER_SIZE;
 
-  static constexpr EType error = EType::EVAL_VAL_TAPE_READ_FAILED;
+  static constexpr EType error = EType::VAL_READ_FAILED;
 
   static constexpr size_t chunkSize = ADOLC_IO_CHUNK_SIZE / sizeof(value_type);
 
@@ -226,7 +222,7 @@ template <class TInfos, class EType> struct ValInfo {
   static size_t getNum(TInfos &tapeInfos) {
     return tapeInfos.valBuffer_.numOnTape();
   }
-  static void setCurr(TInfos &tapeInfos, size_t loc) {
+  static void setPosition(TInfos &tapeInfos, size_t loc) {
     tapeInfos.valBuffer_.position(loc);
   }
 
@@ -255,7 +251,7 @@ template <class TInfos, class EType> struct TayInfo {
   static const StatEntries num = TInfos::NUM_TAYS;
   static const StatEntries bufferSize = TInfos::TAY_BUFFER_SIZE;
 
-  static constexpr EType error = EType::TAPING_TAYLOR_OPEN_FAILED;
+  static constexpr EType error = EType::TAY_READ_FAILED;
 
   static constexpr size_t chunkSize = ADOLC_IO_CHUNK_SIZE / sizeof(value_type);
 
@@ -265,7 +261,7 @@ template <class TInfos, class EType> struct TayInfo {
   static size_t getNum(TInfos &tapeInfos) {
     return tapeInfos.tayBuffer_.numOnTape();
   }
-  static void setCurr(TInfos &tapeInfos, size_t loc) {
+  static void setPosition(TInfos &tapeInfos, size_t loc) {
     tapeInfos.tayBuffer_.position(loc);
   }
 

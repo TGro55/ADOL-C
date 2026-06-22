@@ -8,9 +8,9 @@
 #include <adolc/valuetape/infotype.h>
 #include <array>
 #include <memory>
+#include <type_traits>
 
 using ADOLC::detail::InfoTypeBase;
-using ADOLC::detail::TayInfo;
 using ADOLCError::ErrorType;
 struct TapeInfos {
 
@@ -102,16 +102,18 @@ struct TapeInfos {
 
   ///@brief returns current taylor coefficient and advances the stack pointer
   double get_taylor() {
-    if (tayBuffer_.position() == 0)
-      get_tay_block_r();
+    using TayInfo = ADOLC::detail::TayInfo<TapeInfos, ErrorType>;
+    if (tayBuffer_.position() == 0) {
+      loadBlockIntoBufferReverse<TayInfo>();
+    }
     return tayBuffer_.retreatAndRead();
   }
   // writes a single element (x) to the taylor buffer and writes the buffer
   // to disk if necessary
   void write_scaylor(double val, const char *tay_fileName) {
+    using TayInfo = ADOLC::detail::TayInfo<TapeInfos, ErrorType>;
     if (tayBuffer_.position() == tayBuffer_.capacity())
-      put_block<TayInfo<TapeInfos, ErrorType>>(tay_fileName,
-                                               tayBuffer_.capacity());
+      put_block<TayInfo>(tay_fileName, tayBuffer_.capacity());
     tayBuffer_.writeAndAdvance(val);
   }
 
@@ -142,21 +144,16 @@ struct TapeInfos {
    * in memory. Use in Higher Order Vector drivers.
    */
   void get_taylors_p(double *taylorCoefficients, int degree, int numDir);
-  void get_tay_block_r();
 
   // functions for handling loc tape
   void put_loc(size_t loc) { locBuffer_.writeAndAdvance(loc); }
 
-  void get_loc_block_f();
-  void get_loc_block_r();
   // functions for handling op tape
 
   // puts an operation into the operation buffer, ensures that location
   // buffer and constants buffer are prepared to take the belonging stuff
   void put_op(OPCODES op, const char *loc_fileName, const char *op_fileName,
               const char *val_fileName, size_t reserveExtraLocations = 0);
-  void get_op_block_f();
-  void get_op_block_r();
 
   /**
    * @brief Ensure that the tape file associated with Info exists and is ready
@@ -191,9 +188,10 @@ struct TapeInfos {
    */
   template <InfoTypeBase<TapeInfos, ErrorType> Info>
   void openFile(const char *fileName) {
+    using TayInfo = ADOLC::detail::TayInfo<TapeInfos, ErrorType>;
     using ADOLCError::ErrorType::CANNOT_REMOVE_FILE;
     if (Info::file(*this) == nullptr) {
-      if constexpr (!std::is_same_v<Info, TayInfo<TapeInfos, ErrorType>>) {
+      if constexpr (!std::is_same_v<Info, TayInfo>) {
         Info::openFile(*this, fileName);
         if (Info::file(*this) != nullptr) {
           fclose(Info::file(*this));
@@ -202,8 +200,7 @@ struct TapeInfos {
           }
         }
         Info::openFile(*this, fileName, "wb");
-      } else if constexpr (std::is_same_v<Info,
-                                          TayInfo<TapeInfos, ErrorType>>) {
+      } else if constexpr (std::is_same_v<Info, TayInfo>) {
         Info::openFile(*this, fileName, "w+b");
       } else {
         static_assert(!std::is_same_v<Info, Info>, "Not Implemented!");
@@ -261,7 +258,7 @@ struct TapeInfos {
     }
 
     Info::setNum(*this, Info::getNum(*this) + lengthBlock);
-    Info::setCurr(*this, 0);
+    Info::setPosition(*this, 0);
   }
   // functions for handling val tape
 
@@ -275,8 +272,128 @@ struct TapeInfos {
   }
   void put_vals_writeBlock(double *vals, size_t numVals,
                            const char *op_fileName, const char *val_fileName);
-  void get_val_block_r();
-  void get_val_block_f();
+
+  /**
+   * @brief Loads one block of tape data into the buffer selected by `Info`.
+   *
+   * The caller specifies the number of elements to read via `blockSize`. This
+   * helper only performs the chunked file-to-buffer transfer; higher-level
+   * helpers update the associated position and remaining-on-tape bookkeeping
+   * afterwards.
+   *
+   * @tparam Info      Adapter describing which buffer/file pair to use.
+   * @param blockSize  Number of elements to read from the current file
+   *                   position.
+   */
+  template <InfoTypeBase<TapeInfos, ErrorType> Info>
+  void loadBlockIntoBuffer(size_t blockSize) {
+    using ADOLCError::fail;
+
+    const size_t numChunks = blockSize / Info::chunkSize;
+    for (size_t chunk = 0; chunk < numChunks; chunk++) {
+      const auto ret =
+          fread(Info::bufferBegin(*this) + (chunk * Info::chunkSize),
+                Info::chunkSize * sizeof(typename Info::value_type), 1,
+                Info::file(*this));
+      if (ret != 1) {
+        fail(Info::error, CURRENT_LOCATION);
+      }
+    }
+    const size_t remain = blockSize % Info::chunkSize;
+    if (remain != 0) {
+      const auto ret = fread(
+          Info::bufferBegin(*this) + (numChunks * Info::chunkSize),
+          remain * sizeof(typename Info::value_type), 1, Info::file(*this));
+      if (ret != 1) {
+        fail(Info::error, CURRENT_LOCATION);
+      }
+    }
+  }
+
+  /**
+   * @brief Load the next forward block for the tape selected by `Info`.
+   *
+   * This reads at most one buffer-sized block (selected via `OP_BUFFER_SIZE`,
+   * `LOC_BUFFER_SIZE`, `VAL_BUFFER_SIZE`, or `TAY_BUFFER_SIZE`) from the
+   * current file position, updates the number of remaining elements on tape,
+   * and resets the selected buffer position to its first entry. For the value
+   * buffer it also advance the locations buffer by one.
+   *
+   * @tparam Info  Adapter describing which buffer/file pair to use.
+   */
+  template <InfoTypeBase<TapeInfos, ErrorType> Info>
+  void loadBlockIntoBufferForward() {
+    using ValInfo = ADOLC::detail::ValInfo<TapeInfos, ErrorType>;
+    const size_t blockSize =
+        MIN_ADOLC(stats[Info::bufferSize], Info::getNum(*this));
+    loadBlockIntoBuffer<Info>(blockSize);
+    Info::setNum(*this, Info::getNum(*this) - blockSize);
+    Info::setPosition(*this, 0);
+
+    if constexpr (std::is_same_v<Info, ValInfo>) {
+      locBuffer_.advance();
+    }
+  }
+
+  /**
+   * @brief Load the next reverse block for the tape selected by `Info`.
+   *
+   * The block size is determined by the buffer-size statistic associated with
+   * `Info` (`OP_BUFFER_SIZE`, `LOC_BUFFER_SIZE`, `VAL_BUFFER_SIZE`, or
+   * `TAY_BUFFER_SIZE`). It first seeks to the last unread block, loads it in
+   * its original in-block order, then places the buffer cursor so reverse
+   * sweeps can keep consuming elements with the buffer-type-specific semantics:
+   *
+   * - loc tape: position is reconstructed from the trailing location marker
+   * - val tape: position is aligned with the matching location count entry
+   * - op/tay tape: position starts at the logical end of the loaded block
+   *
+   * Taylor-tape loads additionally update `nextBufferNumber`, while the other
+   * tape kinds decrement their remaining-on-tape counters.
+   *
+   * @tparam Info  Tape adapter describing which tape to load.
+   */
+  template <InfoTypeBase<TapeInfos, ErrorType> Info>
+  void loadBlockIntoBufferReverse() {
+    using ADOLCError::fail;
+    using TayInfo = ADOLC::detail::TayInfo<TapeInfos, ErrorType>;
+    using LocInfo = ADOLC::detail::LocInfo<TapeInfos, ErrorType>;
+    using ValInfo = ADOLC::detail::ValInfo<TapeInfos, ErrorType>;
+
+    const size_t blockSize = stats[Info::bufferSize];
+    size_t pos = 0;
+    if constexpr (std::is_same_v<Info, TayInfo>) {
+      // Taylorcoefficients are not recorded during taping, thats why the number
+      // of Taylorcoefficients is not explicitly stored. Instead the number of
+      // blocks writte is stored.
+      lastTayBlockInCore = 0;
+      pos = static_cast<long>(sizeof(typename Info::value_type) *
+                              nextBufferNumber * blockSize);
+    } else {
+      pos = static_cast<long>(sizeof(typename Info::value_type) *
+                              (Info::getNum(*this) - blockSize));
+    }
+    const auto ret = fseek(Info::file(*this), pos, SEEK_SET);
+    if (ret == -1) {
+      fail(Info::error, CURRENT_LOCATION);
+    }
+    loadBlockIntoBuffer<Info>(blockSize);
+    if constexpr (!std::is_same_v<Info, TayInfo>) {
+      Info::setNum(*this, Info::getNum(*this) - blockSize);
+    } else {
+      --nextBufferNumber;
+    }
+    if constexpr (std::is_same_v<Info, LocInfo>) {
+      // skip unused tail space (stored on locBuffer)
+      const auto loc = blockSize - Info::getBufferVal(*this, blockSize - 1);
+      Info::setPosition(*this, loc);
+    } else if constexpr (std::is_same_v<Info, ValInfo>) {
+      // skip unused tail space (stored on LocBuffer)
+      Info::setPosition(*this, blockSize - locBuffer_.retreatAndRead());
+    } else {
+      Info::setPosition(*this, blockSize);
+    }
+  }
   /****************************************************************************/
   /* Returns a pointer to the first element of a values vector and skips the  */
   /* vector. -- Forward Mode --                                               */
@@ -299,8 +416,10 @@ struct TapeInfos {
   /* Not sure what's going on here! -> vector class ?  --- kowarz             */
   /****************************************************************************/
   void reset_val_r(void) {
-    if (valBuffer_.position() == 0)
-      get_val_block_r();
+    using ValInfo = ADOLC::detail::ValInfo<TapeInfos, ErrorType>;
+    if (valBuffer_.position() == 0) {
+      loadBlockIntoBufferReverse<ValInfo>();
+    }
   }
 
   /****************************************************************************/

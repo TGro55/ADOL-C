@@ -175,7 +175,7 @@ size_t ValueTape::keep_stock() {
 /****************************************************************************/
 /* Set up statics for writing taylor data                                   */
 /****************************************************************************/
-void ValueTape::taylor_begin(size_t bufferSize, int degreeSave) {
+void ValueTape::taylor_begin(int degreeSave) {
   using ADOLCError::fail;
   using ADOLCError::FailInfo;
   using ADOLCError::ErrorType::TAPING_TBUFFER_ALLOCATION_FAILED;
@@ -191,7 +191,7 @@ void ValueTape::taylor_begin(size_t bufferSize, int degreeSave) {
   } else {
     if (tay_fileName() == nullptr)
       tay_fileName();
-    tapeInfos_.tayBuffer_.allocIfNull(bufferSize);
+    tapeInfos_.tayBuffer_.allocIfNull(tapestats(TapeInfos::TAY_BUFFER_SIZE));
   }
 
   deg_save(degreeSave);
@@ -215,10 +215,12 @@ void ValueTape::finish_tay_file() {
 }
 
 void ValueTape::taylor_close() {
+  using TayInfo = ADOLC::detail::TayInfo<TapeInfos, ErrorType>;
   if (tapeInfos_.tayBuffer_.file() != nullptr) {
-    if (keepTaylors())
-      tapeInfos_.put_block<TayInfo<TapeInfos, ErrorType>>(
-          perTapeInfos_.tay_fileName, tapeInfos_.tayBuffer_.position());
+    if (keepTaylors() != 0) {
+      tapeInfos_.put_block<TayInfo>(perTapeInfos_.tay_fileName,
+                                    tapeInfos_.tayBuffer_.position());
+    }
   } else {
     tapeInfos_.tayBuffer_.numOnTape(tapeInfos_.tayBuffer_.position());
   }
@@ -317,7 +319,7 @@ void ValueTape::start_trace() {
 
   /* initialize value stack if necessary */
   if (keepTaylors())
-    taylor_begin(tapestats(TapeInfos::TAY_BUFFER_SIZE), 0);
+    taylor_begin(0);
 }
 
 void ValueTape::save_params() {
@@ -652,7 +654,7 @@ void ValueTape::discard_params_r(void) {
         if (fread(tapeInfos_.valBuffer_.begin() + i * chunkSize,
                   chunkSize * sizeof(double), 1,
                   tapeInfos_.valBuffer_.file()) != 1)
-          ADOLCError::fail(ADOLCError::ErrorType::EVAL_VAL_TAPE_READ_FAILED,
+          ADOLCError::fail(ADOLCError::ErrorType::VAL_READ_FAILED,
                            CURRENT_LOCATION);
 
       remain = TapeInfos::VAL_BUFFER_SIZE % chunkSize;
@@ -660,7 +662,7 @@ void ValueTape::discard_params_r(void) {
         if (fread(tapeInfos_.valBuffer_.begin() + TapeInfos::VAL_BUFFER_SIZE,
                   remain * sizeof(double), 1,
                   tapeInfos_.valBuffer_.file()) != 1)
-          ADOLCError::fail(ADOLCError::ErrorType::EVAL_VAL_TAPE_READ_FAILED,
+          ADOLCError::fail(ADOLCError::ErrorType::VAL_READ_FAILED,
                            CURRENT_LOCATION);
 
       tapeInfos_.valBuffer_.numOnTape(tapeInfos_.valBuffer_.numOnTape() -

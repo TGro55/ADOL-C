@@ -285,18 +285,32 @@ public:
                              reserveExtraLocations);
   }
 
-  /* writes a block of operations onto hard disk and handles file creation,
-   * removal, ... */
-  void get_op_block_f() { tapeInfos_.get_op_block_f(); };
-  /* reads the next operations block into the internal buffer */
-  void get_op_block_r() { return tapeInfos_.get_op_block_r(); };
-  /* reads the previous block of operations into the internal buffer */
-
-  /* writes a block of locations onto hard disk and handles file creation,
-   * removal, ... */
-  void get_loc_block_f() { return tapeInfos_.get_loc_block_f(); };
-  /* reads the next block of locations into the internal buffer */
-  void get_loc_block_r() { return tapeInfos_.get_loc_block_r(); };
+  /**
+   * @brief Load the next forward block for the tape selected by `Info`.
+   *
+   * This is the public ValueTape wrapper around
+   * TapeInfos::loadBlockIntoBufferForward() and replaces the old forward block
+   * loaders with one typed entry point.
+   *
+   * @tparam Info  Adapter describing which tape buffer to refill.
+   */
+  template <InfoTypeBase<TapeInfos, ErrorType> Info>
+  void loadBlockIntoBufferForward() {
+    return tapeInfos_.loadBlockIntoBufferForward<Info>();
+  }
+  /**
+   * @brief Load the previous reverse block for the tape selected by `Info`.
+   *
+   * This is the public ValueTape wrapper around
+   * TapeInfos::loadBlockIntoBufferReverse() and replaces the old reverse block
+   * loaders with one typed entry point.
+   *
+   * @tparam Info  Adapter describing which tape buffer to rewind.
+   */
+  template <InfoTypeBase<TapeInfos, ErrorType> Info>
+  void loadBlockIntoBufferReverse() {
+    return tapeInfos_.loadBlockIntoBufferReverse<Info>();
+  }
   void put_loc(size_t loc) { return tapeInfos_.put_loc(loc); };
 #ifndef ADOLC_HARDDEBUG
   char get_op_f() { return tapeInfos_.opBuffer_.readAndAdvance(); }
@@ -324,11 +338,6 @@ public:
     return tapeInfos_.put_vals_notWriteBlock(reals, numReals);
   }
 
-  /* writes a block of constants (real) onto hard disk and handles file
-   * creation, removal, ... */
-  void get_val_block_f() { return tapeInfos_.get_val_block_f(); };
-  /* reads the next block of constants into the internal buffer */
-  void get_val_block_r() { return tapeInfos_.get_val_block_r(); };
   /* reads the previous block of constants into the internal buffer */
   size_t get_val_space() {
     return tapeInfos_.get_val_space(op_fileName(), val_fileName());
@@ -510,8 +519,9 @@ public:
   // ------------------------------------------- Combined
   /* tries to read a local config file containing, e.g., buffer sizes */
   std::array<std::string, 4> readConfigFile();
-  // ------------------------ set up statics for writing taylor data
-  void taylor_begin(size_t bufferSize, int degreeSave);
+
+  /// @brief Initialize Taylor-stack recording for the current tape.
+  void taylor_begin(int degreeSave);
 
   // close taylor file if necessary and refill buffer if possible
   void finish_tay_file();
@@ -565,9 +575,6 @@ public:
     tapeInfos_.get_taylors_p(taylorCoefficients, degree, numDir);
   };
 
-  // gets the next (previous block) of the value stack
-  void get_tay_block_r() { return tapeInfos_.get_tay_block_r(); }
-
   /**
    * @brief Return the tape file name associated with the given Info adapter.
    *
@@ -598,62 +605,6 @@ public:
   using AllInfoTypes = AllTypes<OpInfoT, LocInfoT, ValInfoT>;
 
   /**
-   * @brief Read the trailing partial chunk of a block from the tape file.
-   *
-   * readLastBloc() reads full chunks of size Info::chunkSize. If lengthBlock is
-   * not a multiple of chunkSize, this reads the remaining elements at the end.
-   *
-   * Preconditions:
-   *  - Info::file(tapeInfos_) is open and positioned at the start of the block.
-   *  - numChunks == lengthBlock / Info::chunkSize.
-   *
-   * Errors:
-   *  - Fails with Info::error if the fread does not succeed.
-   */
-  template <InfoTypeBase<TapeInfos, ErrorType> Info>
-  void readRemaining(size_t numChunks, size_t lengthBlock) {
-    using ADOLC::detail::read;
-    using ADOLCError::fail;
-    // numChunks + remain = lengthBlock
-    const size_t remain = lengthBlock % Info::chunkSize;
-    if (remain > 0) {
-      auto returnCode =
-          read<TapeInfos, ErrorType, Info>(tapeInfos_, numChunks, lengthBlock);
-      if (returnCode != 1)
-        fail(Info::error, CURRENT_LOCATION);
-    }
-  }
-
-  /**
-   * @brief Read a block (up to lengthBlock elements) from a tape file
-   * into the in-memory buffer.
-   *
-   * Reads lengthBlock elements starting at the current file position into the
-   * buffer (Info::bufferBegin). Data is read in full chunks of Info::chunkSize,
-   * plus an optional trailing partial chunk via readRemaining().
-   *
-   * Preconditions:
-   *  - Info::file(tapeInfos_) is open and positioned at the start of the region
-   *    to read (typically the beginning of "block" on disk).
-   *
-   * Errors:
-   *  - Fails with Info::error if any fread does not succeed.
-   */
-  template <InfoTypeBase<TapeInfos, ErrorType> Info>
-  void readBloc(size_t lengthBlock) {
-    using ADOLC::detail::read;
-    using ADOLCError::fail;
-    const size_t numChunks = lengthBlock / Info::chunkSize;
-    for (size_t chunk = 0; chunk < numChunks; chunk++) {
-      auto returnCode =
-          read<TapeInfos, ErrorType, Info>(tapeInfos_, chunk, Info::chunkSize);
-      if (returnCode != 1)
-        fail(Info::error, CURRENT_LOCATION);
-    }
-    readRemaining<Info>(numChunks, lengthBlock);
-  }
-
-  /**
    * @brief Prepare for a forward sweep.
    *
    * If something is stored on disk (tapestats(Info::fileAccess)!=0), this
@@ -675,29 +626,27 @@ public:
    *    get_loc_block_f() to align buffer state with statistics bookkeeping.
    */
   template <InfoType<TapeInfos, ErrorType> Info> void prepare_for() {
-    size_t lengthBlock = 0;
+    size_t blockSize = 0;
     if (tapestats(Info::fileAccess) == 1) {
       Info::openFile(tapeInfos_, fileName<Info>());
 
       // preload at most one block, but never more than total elements on tape
-      lengthBlock = std::min(tapestats(Info::bufferSize), tapestats(Info::num));
-      if (lengthBlock != 0) {
-        readBloc<Info>(lengthBlock);
-      }
+      blockSize = std::min(tapestats(Info::bufferSize), tapestats(Info::num));
+      tapeInfos_.loadBlockIntoBuffer<Info>(blockSize);
       // remaining elements still residing on disk (not yet in buffer)
-      lengthBlock = tapestats(Info::num) - lengthBlock;
+      blockSize = tapestats(Info::num) - blockSize;
     }
-    Info::setNum(tapeInfos_, lengthBlock);
+    Info::setNum(tapeInfos_, blockSize);
     if constexpr (std::is_same_v<Info, LocInfoT>) {
       // location pointer initialization depends on statSpace bookkeeping
       size_t numLocsForStats = statSpace;
       while (numLocsForStats >= tapestats(Info::bufferSize)) {
-        get_loc_block_f();
+        loadBlockIntoBufferForward<LocInfo<TapeInfos, ErrorType>>();
         numLocsForStats -= tapestats(Info::bufferSize);
       }
-      Info::setCurr(tapeInfos_, numLocsForStats);
+      Info::setPosition(tapeInfos_, numLocsForStats);
     } else {
-      Info::setCurr(tapeInfos_, 0);
+      Info::setPosition(tapeInfos_, 0);
     }
   }
 
@@ -732,24 +681,22 @@ public:
    *  - Info::num is set to the number of elements still remaining on disk
    *    before the loaded block.
    *  - Info::curr is set to the end of the loaded region inside the buffer
-   *    (bufferBegin + lengthLB), so reverse logic can walk backwards.
+   *    (bufferBegin + blockSize), so reverse logic can walk backwards.
    *
    * If nothing was written to disk, we assume all data is already in memory
    * and only initialize the counters/pointers accordingly.
    */
   template <InfoType<TapeInfos, ErrorType> Info> void prepare_rev() {
-    size_t lengthLB = tapestats(Info::num);
+    size_t blockSize = tapestats(Info::num);
     if (tapestats(Info::fileAccess) == 1) {
       setFilePosition<Info>();
 
       // size of last (possibly partial) block
-      lengthLB = tapestats(Info::num) % tapestats(Info::bufferSize);
-      if (lengthLB != 0) {
-        readBloc<Info>(lengthLB);
-      }
+      blockSize = tapestats(Info::num) % tapestats(Info::bufferSize);
+      tapeInfos_.loadBlockIntoBuffer<Info>(blockSize);
     }
-    Info::setNum(tapeInfos_, tapestats(Info::num) - lengthLB);
-    Info::setCurr(tapeInfos_, lengthLB);
+    Info::setNum(tapeInfos_, tapestats(Info::num) - blockSize);
+    Info::setPosition(tapeInfos_, blockSize);
   }
 
   /**

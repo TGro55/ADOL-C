@@ -29,6 +29,7 @@ and _NTIGHT__
 
 ----------------------------------------------------------------------------*/
 
+#include <adolc/valuetape/infotype.h>
 #include <adolc/adalloc.h>
 #include <adolc/adolcerror.h>
 #include <adolc/dvlparms.h>
@@ -829,6 +830,9 @@ int hov_forward(
 #endif
 #endif
 {
+  using ValInfo = ValInfo<TapeInfos, ErrorType>;
+  using LocInfo= LocInfo<TapeInfos, ErrorType>;
+  using OpInfo= OpInfo<TapeInfos, ErrorType>;
   ValueTape &tape = findTape(tnum);
   /****************************************************************************/
   /*                                                            ALL VARIABLES */
@@ -1145,9 +1149,7 @@ int hov_forward(
 #endif
 #if defined(_KEEP_)
   if (keep) {
-    const size_t taylbuf = tape.tapestats(TapeInfos::TAY_BUFFER_SIZE);
-
-    tape.taylor_begin(taylbuf, keep - 1);
+    tape.taylor_begin(keep - 1);
   }
 #endif
 
@@ -1163,8 +1165,7 @@ int hov_forward(
 #define TAYLOR_BUFFER dp_T
 #if defined(_KEEP_)
   if (keep) {
-    const size_t taylbuf = tape.tapestats(TapeInfos::TAY_BUFFER_SIZE);
-    tape.taylor_begin(taylbuf, keep - 1);
+    tape.taylor_begin(keep - 1);
   }
 #endif
 
@@ -1233,8 +1234,7 @@ int hov_forward(
 #define T_TEMP dp_Ttemp;
 #if defined(_KEEP_)
   if (keep) {
-    const size_t taylbuf = tape.tapestats(TapeInfos::TAY_BUFFER_SIZE);
-    tape.taylor_begin(taylbuf, keep - 1);
+    tape.taylor_begin(keep - 1);
   }
 #endif
 
@@ -1247,8 +1247,7 @@ int hov_forward(
 #define T_TEMP dp_Ttemp;
 #if defined(_KEEP_)
   if (keep) {
-    const size_t taylbuf = tape.tapestats(TapeInfos::TAY_BUFFER_SIZE);
-    tape.taylor_begin(taylbuf, keep - 1);
+    tape.taylor_begin(keep - 1);
   }
 #endif
 #endif
@@ -1286,19 +1285,19 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case end_of_op: /* end_of_op */
-      tape.get_op_block_f();
+      tape.loadBlockIntoBufferForward<OpInfo>();
       operation = tape.get_op_f();
       /* Skip next operation, it's another end_of_op */
       break;
 
       /*--------------------------------------------------------------------------*/
     case end_of_int: /* end_of_int */
-      tape.get_loc_block_f();
+      tape.loadBlockIntoBufferForward<LocInfo>();
       break;
 
       /*--------------------------------------------------------------------------*/
     case end_of_val: /* end_of_val */
-      tape.get_val_block_f();
+      tape.loadBlockIntoBufferForward<ValInfo>();
       break;
       /*--------------------------------------------------------------------------*/
     case start_of_tape: /* start_of_tape */
