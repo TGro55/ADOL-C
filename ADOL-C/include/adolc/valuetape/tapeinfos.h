@@ -94,20 +94,48 @@ struct TapeInfos {
 
   void freeTapeResources();
 
+  /**
+   * @brief Load the next forward element for the tape selected by `Info`.
+   *
+   * This reads the element at the current buffer position from the selected
+   * buffer and advances the buffer cursor by one entry.
+   *
+   * @tparam Info  Adapter describing which buffer to use.
+   * @return The element read from the current buffer position.
+   */
+  template <InfoTypeBase<TapeInfos, ErrorType> Info>
+  Info::value_type loadNextForward() {
+    auto &buffer = Info::getBuffer(*this);
+    return buffer.readAndAdvance();
+  }
+
+  /**
+   * @brief Load the next reverse element for the tape selected by `Info`.
+   *
+   * This moves the selected buffer cursor one entry backward and returns the
+   * element at that position. Taylor buffer reads additionally refill the
+   * previous reverse block on demand when the in-memory buffer is at the end.
+   *
+   * @tparam Info  Adapter describing which buffer to use.
+   * @return The element read from the previous buffer position.
+   */
+  template <InfoTypeBase<TapeInfos, ErrorType> Info>
+  Info::value_type loadNextReverse() {
+    using TayInfo = ADOLC::detail::TayInfo<TapeInfos, ErrorType>;
+    auto &buffer = Info::getBuffer(*this);
+    if constexpr (std::is_same_v<Info, TayInfo>) {
+      if (buffer.position() == 0) {
+        loadBlockIntoBufferReverse<Info>();
+      }
+    }
+    return buffer.retreatAndRead();
+  }
   // writes the block of size depth of taylor coefficients from point loc to
   // the taylor buffer, if the buffer is filled, then it is written to the
   // taylor tape
   void write_taylor(double *taylorCoefficientPos, std::ptrdiff_t keep,
                     const char *tay_fileName);
 
-  ///@brief returns current taylor coefficient and advances the stack pointer
-  double get_taylor() {
-    using TayInfo = ADOLC::detail::TayInfo<TapeInfos, ErrorType>;
-    if (tayBuffer_.position() == 0) {
-      loadBlockIntoBufferReverse<TayInfo>();
-    }
-    return tayBuffer_.retreatAndRead();
-  }
   // writes a single element (x) to the taylor buffer and writes the buffer
   // to disk if necessary
   void write_scaylor(double val, const char *tay_fileName) {

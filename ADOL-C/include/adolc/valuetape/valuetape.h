@@ -312,21 +312,31 @@ public:
     return tapeInfos_.loadBlockIntoBufferReverse<Info>();
   }
   void put_loc(size_t loc) { return tapeInfos_.put_loc(loc); };
-#ifndef ADOLC_HARDDEBUG
-  char get_op_f() { return tapeInfos_.opBuffer_.readAndAdvance(); }
-  char get_op_r() { return tapeInfos_.opBuffer_.retreatAndRead(); }
-  size_t get_locint_f() { return tapeInfos_.locBuffer_.readAndAdvance(); }
-  size_t get_locint_r() { return tapeInfos_.locBuffer_.retreatAndRead(); }
-  double get_val_f() { return tapeInfos_.valBuffer_.readAndAdvance(); }
-  double get_val_r() { return tapeInfos_.valBuffer_.retreatAndRead(); }
-#else
-  unsigned char ValueTape::get_op_f() { return tapeInfos_.get_op_f(); }
-  unsigned char ValueTape::get_op_r() { return tapeInfos_.get_op_r(); }
-  size_t ValueTape::get_size_t_f() { return tapeInfos_.get_size_t_f(); }
-  size_t ValueTape::get_size_t_r() { return tapeInfos_.get_size_t_r(); }
-  double ValueTape::get_val_f() { return tapeInfos_.get_val_f(); }
-  double ValueTape::get_val_r() { return tapeInfos_.get_val_r(); }
-#endif // ADOLC_HARDDEBUG
+  /**
+   * @brief Load the next forward element for the tape selected by `Info`.
+   *
+   * This is the public ValueTape wrapper around TapeInfos::loadNextForward().
+   *
+   * @tparam Info  Adapter describing which buffer to use.
+   * @return The element read from the current buffer position.
+   */
+  template <InfoTypeBase<TapeInfos, ErrorType> Info>
+  Info::value_type loadNextForward() {
+    return tapeInfos_.loadNextForward<Info>();
+  }
+  /**
+   * @brief Load the next reverse element for the tape selected by `Info`.
+   *
+   * This is the public ValueTape wrapper around TapeInfos::loadNextReverse().
+   *
+   * @tparam Info  Adapter describing which buffer to use.
+   * @return The element read from the previous buffer position.
+   */
+  template <InfoTypeBase<TapeInfos, ErrorType> Info>
+  Info::value_type loadNextReverse() {
+    return tapeInfos_.loadNextReverse<Info>();
+  }
+
   void put_val(const double val) { tapeInfos_.valBuffer_.writeAndAdvance(val); }
   /* puts a single constant into the location buffer, no disk access */
   void put_vals_writeBlock(double *reals, size_t numReals) {
@@ -554,9 +564,6 @@ public:
   void delete_scaylor(size_t loc) {
     globalTapeVars_.store[loc] = tapeInfos_.tayBuffer_.retreatAndRead();
   }
-
-  ///@brief returns current taylor coefficient and advances the stack pointer
-  double get_taylor() { return tapeInfos_.get_taylor(); }
 
   /*
    * Puts a block of taylor coefficients from the value stack buffer to the

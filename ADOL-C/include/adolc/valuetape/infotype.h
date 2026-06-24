@@ -3,6 +3,7 @@
 #define ADOLC_INFO_TYPE_H
 #include <adolc/adolcerror.h>
 #include <adolc/internal/usrparms.h> // ADOLC_IO_CHUNK_SIZE
+#include <adolc/valuetape/bufferstate.h>
 #include <concepts>
 #include <cstddef>
 #include <cstdio>
@@ -131,6 +132,8 @@ template <class TInfos, class EType> struct OpInfo {
 
   static constexpr size_t chunkSize = ADOLC_IO_CHUNK_SIZE / sizeof(value_type);
 
+  /// Returns the BufferState selected by this tape adapter.
+  static OpBuffer &getBuffer(TInfos &tapeInfos) { return tapeInfos.opBuffer_; }
   static void setNum(TInfos &tapeInfos, size_t n) {
     tapeInfos.opBuffer_.numOnTape(n);
   }
@@ -171,6 +174,10 @@ template <class TInfos, class EType> struct LocInfo {
 
   static constexpr size_t chunkSize = ADOLC_IO_CHUNK_SIZE / sizeof(value_type);
 
+  /// Returns the BufferState selected by this tape adapter.
+  static LocBuffer &getBuffer(TInfos &tapeInfos) {
+    return tapeInfos.locBuffer_;
+  }
   static void setNum(TInfos &tapeInfos, size_t n) {
     tapeInfos.locBuffer_.numOnTape(n);
   }
@@ -216,6 +223,11 @@ template <class TInfos, class EType> struct ValInfo {
 
   static constexpr size_t chunkSize = ADOLC_IO_CHUNK_SIZE / sizeof(value_type);
 
+  /// Returns the BufferState selected by this tape adapter.
+  static ValBuffer &getBuffer(TInfos &tapeInfos) {
+    return tapeInfos.valBuffer_;
+  }
+
   static void setNum(TInfos &tapeInfos, size_t n) {
     tapeInfos.valBuffer_.numOnTape(n);
   }
@@ -254,6 +266,11 @@ template <class TInfos, class EType> struct TayInfo {
   static constexpr EType error = EType::TAY_READ_FAILED;
 
   static constexpr size_t chunkSize = ADOLC_IO_CHUNK_SIZE / sizeof(value_type);
+
+  /// Returns the BufferState selected by this tape adapter.
+  static TayBuffer &getBuffer(TInfos &tapeInfos) {
+    return tapeInfos.tayBuffer_;
+  }
 
   static void setNum(TInfos &tapeInfos, size_t n) {
     tapeInfos.tayBuffer_.numOnTape(n);

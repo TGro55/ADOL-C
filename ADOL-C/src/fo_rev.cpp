@@ -299,6 +299,9 @@ int int_reverse_safe(
   using ValInfo = ADOLC::detail::ValInfo<TapeInfos, ErrorType>;
   using LocInfo = ADOLC::detail::LocInfo<TapeInfos, ErrorType>;
   using OpInfo = ADOLC::detail::OpInfo<TapeInfos, ErrorType>;
+#if !defined(_INT_REV_) || !defined(_NTIGHT_)
+  using TayInfo = ADOLC::detail::TayInfo<TapeInfos, ErrorType>;
+#endif
   ValueTape &tape = findTape(tnum);
   /****************************************************************************/
   /*                                                           ALL VARIABLES  */
@@ -560,7 +563,7 @@ int int_reverse_safe(
 
   /****************************************************************************/
   /*                                                            REVERSE SWEEP */
-  operation = tape.get_op_r();
+  operation = tape.loadNextReverse<OpInfo>();
   while (operation != start_of_tape) { /* Switch statement to execute the
                                           operations in Reverse */
 
@@ -573,7 +576,7 @@ int int_reverse_safe(
       /*--------------------------------------------------------------------------*/
     case end_of_op: /* end_of_op */
       tape.loadBlockIntoBufferReverse<OpInfo>();
-      operation = tape.get_op_r();
+      operation = tape.loadNextReverse<OpInfo>();
       /* Skip next operation, it's another end_of_op */
       break;
 
@@ -600,7 +603,7 @@ int int_reverse_safe(
 
       /*--------------------------------------------------------------------------*/
     case eq_zero: /* eq_zero */
-      arg = tape.get_locint_r();
+      arg = tape.loadNextReverse<LocInfo>();
 
 #if !defined(_NTIGHT_)
       ret_c = 0;
@@ -611,13 +614,13 @@ int int_reverse_safe(
     case neq_zero: /* neq_zero */
     case gt_zero:  /* gt_zero */
     case lt_zero:  /* lt_zero */
-      arg = tape.get_locint_r();
+      arg = tape.loadNextReverse<LocInfo>();
       break;
 
       /*--------------------------------------------------------------------------*/
     case ge_zero: /* ge_zero */
     case le_zero: /* le_zero */
-      arg = tape.get_locint_r();
+      arg = tape.loadNextReverse<LocInfo>();
 
 #if !defined(_NTIGHT_)
       if (TARG == 0)
@@ -632,8 +635,8 @@ int int_reverse_safe(
       /*--------------------------------------------------------------------------*/
     case assign_a: /* assign an adouble variable an    assign_a */
       /* adouble value. (=) */
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Aarg, ADJOINT_BUFFER[arg])
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -649,16 +652,16 @@ int int_reverse_safe(
       }
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
       /*--------------------------------------------------------------------------*/
     case assign_d: /* assign an adouble variable a    assign_d */
       /* double value. (=) */
-      res = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -671,14 +674,14 @@ int int_reverse_safe(
 #endif
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
     case assign_p: /* assign an adouble variable a    assign_d */
       /* double value. (=) */
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
       coval = tape.paramstore()[arg];
 #endif /* !_NTIGHT_ */
@@ -693,13 +696,13 @@ int int_reverse_safe(
 #endif
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
       /*--------------------------------------------------------------------------*/
     case assign_d_zero: /* assign an adouble variable a    assign_d_zero */
     case assign_d_one:  /* double value (0 or 1). (=)       assign_d_one */
-      res = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
 
@@ -711,14 +714,14 @@ int int_reverse_safe(
 #endif
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
       /*--------------------------------------------------------------------------*/
     case assign_ind: /* assign an adouble variable an    assign_ind */
       /* independent double value (<<=) */
-      res = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
 
@@ -740,7 +743,7 @@ int int_reverse_safe(
       }
 #endif
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       indexi--;
       break;
@@ -748,7 +751,7 @@ int int_reverse_safe(
       /*--------------------------------------------------------------------------*/
     case assign_dep: /* assign a float variable a    assign_dep */
       /* dependent adouble value. (>>=) */
-      res = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
 
@@ -765,19 +768,19 @@ int int_reverse_safe(
       /*--------------------------------------------------------------------------*/
     case eq_plus_d: /* Add a floating point to an    eq_plus_d */
       /* adouble. (+=) */
-      res = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
       /*--------------------------------------------------------------------------*/
     case eq_plus_a: /* Add an adouble to another    eq_plus_a */
       /* adouble. (+=) */
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
       ASSIGN_A(Aarg, ADJOINT_BUFFER[arg]);
@@ -790,26 +793,26 @@ int int_reverse_safe(
 #endif
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
       /*--------------------------------------------------------------------------*/
     case eq_min_d: /* Subtract a floating point from an    eq_min_d */
       /* adouble. (-=) */
-      res = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
       /*--------------------------------------------------------------------------*/
     case eq_min_a: /* Subtract an adouble from another    eq_min_a */
       /* adouble. (-=) */
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
       ASSIGN_A(Aarg, ADJOINT_BUFFER[arg])
@@ -822,16 +825,16 @@ int int_reverse_safe(
 #endif
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
       /*--------------------------------------------------------------------------*/
     case eq_mult_d: /* Multiply an adouble by a    eq_mult_d */
       /* flaoting point. (*=) */
-      res = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 #endif /* !_NTIGHT_ */
 
 #if !defined(_INT_REV_)
@@ -841,18 +844,18 @@ int int_reverse_safe(
 #endif
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
       /*--------------------------------------------------------------------------*/
     case eq_mult_a: /* Multiply one adouble by another    eq_mult_a */
       /* (*=) */
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -873,10 +876,10 @@ int int_reverse_safe(
       /*--------------------------------------------------------------------------*/
     case incr_a: /* Increment an adouble    incr_a */
     case decr_a: /* Increment an adouble    decr_a */
-      res = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
@@ -886,9 +889,9 @@ int int_reverse_safe(
 
       /*--------------------------------------------------------------------------*/
     case plus_a_a: /* : Add two adoubles. (+)    plus a_a */
-      res = tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
       ASSIGN_A(Aarg1, ADJOINT_BUFFER[arg1])
@@ -909,17 +912,17 @@ int int_reverse_safe(
       }
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
       /*--------------------------------------------------------------------------*/
     case plus_d_a: /* Add an adouble and a double    plus_d_a */
       /* (+) */
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -938,16 +941,16 @@ int int_reverse_safe(
       }
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
       /*--------------------------------------------------------------------------*/
     case min_a_a: /* Subtraction of two adoubles    min_a_a */
       /* (-) */
-      res = tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
       ASSIGN_A(Aarg1, ADJOINT_BUFFER[arg1])
@@ -968,17 +971,17 @@ int int_reverse_safe(
       }
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
       /*--------------------------------------------------------------------------*/
     case min_d_a: /* Subtract an adouble from a    min_d_a */
       /* double (-) */
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -997,18 +1000,18 @@ int int_reverse_safe(
       }
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
       /*--------------------------------------------------------------------------*/
     case mult_a_a: /* Multiply two adoubles (*)    mult_a_a */
-      res = tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -1019,7 +1022,7 @@ int int_reverse_safe(
 #if defined(_INT_REV_)
         size_t aTmp = *Ares;
         ARES_INC = 0;
-        AARG2_INC |= aTmp;
+        ;
         AARG1_INC |= aTmp;
 #else
         revreal aTmp = *Ares;
@@ -1034,9 +1037,9 @@ int int_reverse_safe(
       /* olvo 991122: new op_code with recomputation */
     case eq_plus_prod: /* increment a product of           eq_plus_prod */
       /* two adoubles (*) */
-      res = tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
       ASSIGN_A(Aarg2, ADJOINT_BUFFER[arg2])
@@ -1062,9 +1065,9 @@ int int_reverse_safe(
       /* olvo 991122: new op_code with recomputation */
     case eq_min_prod: /* decrement a product of            eq_min_prod */
       /* two adoubles (*) */
-      res = tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
       ASSIGN_A(Aarg2, ADJOINT_BUFFER[arg2])
@@ -1089,10 +1092,10 @@ int int_reverse_safe(
       /*--------------------------------------------------------------------------*/
     case mult_d_a: /* Multiply an adouble by a double    mult_d_a */
       /* (*) */
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -1111,7 +1114,7 @@ int int_reverse_safe(
       }
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
@@ -1119,9 +1122,9 @@ int int_reverse_safe(
     case div_a_a: /* Divide an adouble by an adouble    div_a_a */
     {
       /* (/) */
-      res = tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
       ASSIGN_A(Aarg2, ADJOINT_BUFFER[arg2])
@@ -1130,7 +1133,7 @@ int int_reverse_safe(
       /* olvo 980922 changed order to allow x=y/x */
 #if !defined(_NTIGHT_) && !defined(_INT_REV_)
       double r_0 = -TRES;
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
       double r0 = 1.0 / TARG2;
       r_0 *= r0;
 #endif /* !_NTIGHT_ */
@@ -1153,11 +1156,11 @@ int int_reverse_safe(
       /*--------------------------------------------------------------------------*/
     case div_d_a: /* Division double - adouble (/)    div_d_a */
     {
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -1167,7 +1170,7 @@ int int_reverse_safe(
       /* olvo 980922 changed order to allow x=d/x */
       double r0 = -TRES;
       if (arg == res)
-        rp_T[arg] = tape.get_taylor();
+        rp_T[arg] = tape.loadNextReverse<TayInfo>();
       r0 /= TARG;
 #endif /* !_NTIGHT_ */
 
@@ -1185,7 +1188,7 @@ int int_reverse_safe(
 
 #if !defined(_NTIGHT_)
       if (arg != res)
-        rp_T[res] = tape.get_taylor();
+        rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
     } break;
 
@@ -1195,8 +1198,8 @@ int int_reverse_safe(
 
       /*--------------------------------------------------------------------------*/
     case pos_sign_a: /* pos_sign_a */
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
       ASSIGN_A(Aarg, ADJOINT_BUFFER[arg])
@@ -1214,14 +1217,14 @@ int int_reverse_safe(
       }
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
       /*--------------------------------------------------------------------------*/
     case neg_sign_a: /* neg_sign_a */
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
       ASSIGN_A(Aarg, ADJOINT_BUFFER[arg])
@@ -1239,7 +1242,7 @@ int int_reverse_safe(
       }
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
@@ -1249,8 +1252,8 @@ int int_reverse_safe(
 
       /*--------------------------------------------------------------------------*/
     case exp_op: /* exponent operation    exp_op */
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
       ASSIGN_A(Aarg, ADJOINT_BUFFER[arg])
@@ -1268,15 +1271,15 @@ int int_reverse_safe(
       }
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
       /*--------------------------------------------------------------------------*/
     case sin_op: /* sine operation    sin_op */
-      res = tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
       ASSIGN_A(Aarg1, ADJOINT_BUFFER[arg1])
@@ -1294,17 +1297,17 @@ int int_reverse_safe(
       }
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
-      rp_T[arg2] = tape.get_taylor(); /* olvo 980710 covalue */
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
+      rp_T[arg2] = tape.loadNextReverse<TayInfo>(); /* olvo 980710 covalue */
       /* NOTE: ADJOINT_BUFFER[arg2] should be 0 already */
 #endif /* !_NTIGHT_ */
       break;
 
       /*--------------------------------------------------------------------------*/
     case cos_op: /* cosine operation    cos_op */
-      res = tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
       ASSIGN_A(Aarg1, ADJOINT_BUFFER[arg1])
@@ -1322,8 +1325,8 @@ int int_reverse_safe(
       }
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
-      rp_T[arg2] = tape.get_taylor(); /* olvo 980710 covalue */
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
+      rp_T[arg2] = tape.loadNextReverse<TayInfo>(); /* olvo 980710 covalue */
       /* NOTE ADJOINT_BUFFER[arg2] should be 0 already */
 #endif /* !_NTIGHT_ */
       break;
@@ -1337,12 +1340,12 @@ int int_reverse_safe(
     case atanh_op: /* atanh_op */
     case erf_op:   /* erf_op   */
     case erfc_op:  /* erfc_op  */
-      res = tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -1364,11 +1367,11 @@ int int_reverse_safe(
       /*--------------------------------------------------------------------------*/
     case log_op: /* log_op */
     {
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -1394,10 +1397,10 @@ int int_reverse_safe(
       /*--------------------------------------------------------------------------*/
     case pow_op: /* pow_op */
     {
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -1407,7 +1410,7 @@ int int_reverse_safe(
       /* olvo 980921 changed order to allow x=pow(x,n) */
       double r0 = TRES; // r0 = pow(x, n)
       if (arg == res)
-        rp_T[arg] = tape.get_taylor();
+        rp_T[arg] = tape.loadNextReverse<TayInfo>();
       if (TARG == 0.0)
         r0 = 0.0;
       else
@@ -1428,15 +1431,15 @@ int int_reverse_safe(
 
 #if !defined(_NTIGHT_)
       if (res != arg)
-        rp_T[res] = tape.get_taylor();
+        rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
     } break;
 
       /*--------------------------------------------------------------------------*/
     case sqrt_op: /* sqrt_op */
     {
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
       ASSIGN_A(Aarg, ADJOINT_BUFFER[arg])
@@ -1460,15 +1463,15 @@ int int_reverse_safe(
       }
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
     } break;
 
       /*--------------------------------------------------------------------------*/
     case cbrt_op: /* cbrt_op */
     {
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
       ASSIGN_A(Aarg, ADJOINT_BUFFER[arg])
@@ -1492,18 +1495,18 @@ int int_reverse_safe(
       }
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
     } break;
 
       /*--------------------------------------------------------------------------*/
     case gen_quad: /* gen_quad */
-      res = tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
+      coval = tape.loadNextReverse<ValInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -1522,19 +1525,19 @@ int int_reverse_safe(
       }
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
       /*--------------------------------------------------------------------------*/
     case min_op: /* min_op */
-      res = tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Aarg1, ADJOINT_BUFFER[arg1])
@@ -1607,12 +1610,12 @@ int int_reverse_safe(
 
       /*--------------------------------------------------------------------------*/
     case abs_val: /* abs_val */
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -1707,12 +1710,12 @@ int int_reverse_safe(
 
       /*--------------------------------------------------------------------------*/
     case ceil_op: /* ceil_op */
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -1736,12 +1739,12 @@ int int_reverse_safe(
 
       /*--------------------------------------------------------------------------*/
     case floor_op: /* floor_op */
-      res = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -1770,14 +1773,14 @@ int int_reverse_safe(
 
       /*--------------------------------------------------------------------------*/
     case cond_assign: /* cond_assign */
-      res = tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Aarg1, ADJOINT_BUFFER[arg1])
@@ -1834,14 +1837,14 @@ int int_reverse_safe(
       break;
 
     case cond_eq_assign: /* cond_assign */
-      res = tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Aarg1, ADJOINT_BUFFER[arg1])
@@ -1899,13 +1902,13 @@ int int_reverse_safe(
 
       /*--------------------------------------------------------------------------*/
     case cond_assign_s: /* cond_assign_s */
-      res = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Aarg1, ADJOINT_BUFFER[arg1])
@@ -1941,13 +1944,13 @@ int int_reverse_safe(
       break;
 
     case cond_eq_assign_s: /* cond_eq_assign_s */
-      res = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
 
       ASSIGN_A(Aarg1, ADJOINT_BUFFER[arg1])
@@ -1991,11 +1994,11 @@ int int_reverse_safe(
     case ge_a_a:
     case lt_a_a:
     case gt_a_a:
-      res = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 #endif
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
 
@@ -2007,7 +2010,7 @@ int int_reverse_safe(
 #endif
 
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
 
       break;
@@ -2017,15 +2020,15 @@ int int_reverse_safe(
 #if !defined(_NTIGHT_)
       double val =
 #endif
-          tape.get_val_r();
-      res = tape.get_locint_r();
+          tape.loadNextReverse<ValInfo>();
+      res = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
       size_t idx, numval = (size_t)trunc(fabs(val));
       locint vectorloc;
       vectorloc =
 #endif
-          tape.get_locint_r();
-      arg = tape.get_locint_r();
+          tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
       idx = (size_t)trunc(fabs(TARG));
       if (idx >= numval)
@@ -2045,7 +2048,7 @@ int int_reverse_safe(
         *Ares = 0.0;
 #endif
       }
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #else
       ADOLCError::fail(ADOLCError::ErrorType::ACTIVE_SUBSCRIPTING,
                        CURRENT_LOCATION);
@@ -2056,15 +2059,15 @@ int int_reverse_safe(
 #if !defined(_NTIGHT_)
       double val =
 #endif
-          tape.get_val_r();
-      res = tape.get_locint_r();
+          tape.loadNextReverse<ValInfo>();
+      res = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
       size_t idx, numval = (size_t)trunc(fabs(val));
       locint vectorloc;
       vectorloc =
 #endif
-          tape.get_locint_r();
-      arg = tape.get_locint_r();
+          tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
       idx = (size_t)trunc(fabs(TARG));
       if (idx >= numval)
@@ -2082,7 +2085,7 @@ int int_reverse_safe(
         ADOLCError::fail(
             ADOLCError::ErrorType::ADUBREF_SAFE_MODE, CURRENT_LOCATION,
             ADOLCError::FailInfo{.info5 = vectorloc + idx, .info6 = arg1});
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #else
       ADOLCError::fail(ADOLCError::ErrorType::ACTIVE_SUBSCRIPTING,
                        CURRENT_LOCATION);
@@ -2090,8 +2093,8 @@ int int_reverse_safe(
     } break;
 
     case ref_copyout:
-      res = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
       arg = (size_t)trunc(fabs(TARG1));
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -2106,7 +2109,7 @@ int int_reverse_safe(
         ARES_INC = 0.0;
 #endif
       }
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #else
       ADOLCError::fail(ADOLCError::ErrorType::ADUBREF_VE_REF, CURRENT_LOCATION);
 #endif
@@ -2114,11 +2117,11 @@ int int_reverse_safe(
 
     case ref_incr_a: /* Increment an adouble    incr_a */
     case ref_decr_a: /* Increment an adouble    decr_a */
-      arg1 = tape.get_locint_r();
+      arg1 = tape.loadNextReverse<LocInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(TARG1));
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #else
       ADOLCError::fail(ADOLCError::ErrorType::ADUBREF_VE_REF, CURRENT_LOCATION);
 #endif /* !_NTIGHT_ */
@@ -2126,10 +2129,10 @@ int int_reverse_safe(
 
     case ref_assign_d: /* assign an adouble variable a    assign_d */
       /* double value. (=) */
-      arg1 = tape.get_locint_r();
+      arg1 = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(TARG1));
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
 
@@ -2140,7 +2143,7 @@ int int_reverse_safe(
           ARES_INC = 0.0;
 #endif
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #else
       ADOLCError::fail(ADOLCError::ErrorType::ADUBREF_VE_REF, CURRENT_LOCATION);
 #endif /* !_NTIGHT_ */
@@ -2148,7 +2151,7 @@ int int_reverse_safe(
 
     case ref_assign_d_zero: /* assign an adouble variable a    assign_d_zero */
     case ref_assign_d_one:  /* double value (0 or 1). (=)       assign_d_one */
-      arg1 = tape.get_locint_r();
+      arg1 = tape.loadNextReverse<LocInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(TARG1));
@@ -2161,7 +2164,7 @@ int int_reverse_safe(
 #else
           ARES_INC = 0.0;
 #endif
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #else
       ADOLCError::fail(ADOLCError::ErrorType::ADUBREF_VE_REF, CURRENT_LOCATION);
 #endif /* !_NTIGHT_ */
@@ -2169,8 +2172,8 @@ int int_reverse_safe(
 
     case ref_assign_a: /* assign an adouble variable an    assign_a */
       /* adouble value. (=) */
-      arg1 = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      arg1 = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(TARG1));
@@ -2188,7 +2191,7 @@ int int_reverse_safe(
 #endif
       }
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #else
       ADOLCError::fail(ADOLCError::ErrorType::ADUBREF_VE_REF, CURRENT_LOCATION);
 #endif /* !_NTIGHT_ */
@@ -2196,7 +2199,7 @@ int int_reverse_safe(
 
     case ref_assign_ind: /* assign an adouble variable an    assign_ind */
       /* independent double value (<<=) */
-      arg1 = tape.get_locint_r();
+      arg1 = tape.loadNextReverse<LocInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(TARG1));
@@ -2208,7 +2211,7 @@ int int_reverse_safe(
       FOR_0_LE_l_LT_p RESULTS(l, indexi) = ARES_INC;
 #endif
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #else
       ADOLCError::fail(ADOLCError::ErrorType::ADUBREF_VE_REF, CURRENT_LOCATION);
 #endif /* !_NTIGHT_ */
@@ -2217,12 +2220,12 @@ int int_reverse_safe(
 
     case ref_eq_plus_d: /* Add a floating point to an    eq_plus_d */
       /* adouble. (+=) */
-      arg1 = tape.get_locint_r();
+      arg1 = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(TARG1));
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #else
       ADOLCError::fail(ADOLCError::ErrorType::ADUBREF_VE_REF, CURRENT_LOCATION);
 #endif /* !_NTIGHT_ */
@@ -2230,8 +2233,8 @@ int int_reverse_safe(
 
     case ref_eq_plus_a: /* Add an adouble to another    eq_plus_a */
       /* adouble. (+=) */
-      arg1 = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      arg1 = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(TARG1));
@@ -2246,7 +2249,7 @@ int int_reverse_safe(
           AARG_INC += ARES_INC;
 #endif
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #else
       ADOLCError::fail(ADOLCError::ErrorType::ADUBREF_VE_REF, CURRENT_LOCATION);
 #endif /* !_NTIGHT_ */
@@ -2254,12 +2257,12 @@ int int_reverse_safe(
 
     case ref_eq_min_d: /* Subtract a floating point from an    eq_min_d */
       /* adouble. (-=) */
-      arg1 = tape.get_locint_r();
+      arg1 = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(TARG1));
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #else
       ADOLCError::fail(ADOLCError::ErrorType::ADUBREF_VE_REF, CURRENT_LOCATION);
 #endif /* !_NTIGHT_ */
@@ -2267,8 +2270,8 @@ int int_reverse_safe(
 
     case ref_eq_min_a: /* Subtract an adouble from another    eq_min_a */
       /* adouble. (-=) */
-      arg1 = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      arg1 = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(TARG1));
@@ -2282,7 +2285,7 @@ int int_reverse_safe(
           AARG_INC -= ARES_INC;
 #endif
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #else
       ADOLCError::fail(ADOLCError::ErrorType::ADUBREF_VE_REF, CURRENT_LOCATION);
 #endif /* !_NTIGHT_ */
@@ -2290,10 +2293,10 @@ int int_reverse_safe(
 
     case ref_eq_mult_d: /* Multiply an adouble by a    eq_mult_d */
       /* flaoting point. (*=) */
-      arg1 = tape.get_locint_r();
+      arg1 = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(TARG1));
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
 
 #if !defined(_INT_REV_)
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -2301,7 +2304,7 @@ int int_reverse_safe(
       FOR_0_LE_l_LT_p ARES_INC *= coval;
 #endif
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #else
       ADOLCError::fail(ADOLCError::ErrorType::ADUBREF_VE_REF, CURRENT_LOCATION);
 #endif /* !_NTIGHT_ */
@@ -2309,12 +2312,12 @@ int int_reverse_safe(
 
     case ref_eq_mult_a: /* Multiply one adouble by another    eq_mult_a */
       /* (*=) */
-      arg1 = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      arg1 = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(TARG1));
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
       ASSIGN_A(Aarg, ADJOINT_BUFFER[arg])
@@ -2335,9 +2338,9 @@ int int_reverse_safe(
       break;
 
     case vec_copy:
-      res = tape.get_locint_r();
-      size = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      size = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
       for (locint qq = 0; qq < size; qq++) {
 
         ASSIGN_A(Aarg, ADJOINT_BUFFER[arg + qq])
@@ -2354,17 +2357,17 @@ int int_reverse_safe(
         }
 
 #if !defined(_NTIGHT_)
-        rp_T[res + qq] = tape.get_taylor();
+        rp_T[res + qq] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       }
 
       break;
 
     case vec_dot:
-      res = tape.get_locint_r();
-      size = tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      size = tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
       for (locint qq = 0; qq < size; qq++) {
         ASSIGN_A(Ares, ADJOINT_BUFFER[res])
         ASSIGN_A(Aarg2, ADJOINT_BUFFER[arg2])
@@ -2382,16 +2385,16 @@ int int_reverse_safe(
         arg1++;
       }
 #if !defined(_NTIGHT_)
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
     case vec_axpy:
-      res = tape.get_locint_r();
-      size = tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      size = tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
       for (locint qq = 0; qq < size; qq++) {
         ASSIGN_A(Ares, ADJOINT_BUFFER[res])
         ASSIGN_A(Aarg, ADJOINT_BUFFER[arg])
@@ -2409,7 +2412,7 @@ int int_reverse_safe(
 #endif
         }
 #if !defined(_NTIGHT_)
-        rp_T[res] = tape.get_taylor();
+        rp_T[res] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
         arg2++;
         arg1++;
@@ -2422,15 +2425,15 @@ int int_reverse_safe(
 #if !defined(_NTIGHT_)
       locint ref =
 #endif
-          tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
-      arg = tape.get_locint_r();
+          tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
       res = (size_t)trunc(fabs(rp_T[ref]));
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 
       ASSIGN_A(Aarg1, ADJOINT_BUFFER[arg1])
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -2480,15 +2483,15 @@ int int_reverse_safe(
 #if !defined(_NTIGHT_)
       locint ref =
 #endif
-          tape.get_locint_r();
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
-      arg = tape.get_locint_r();
+          tape.loadNextReverse<LocInfo>();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
       res = (size_t)trunc(fabs(rp_T[ref]));
 
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 
       ASSIGN_A(Aarg1, ADJOINT_BUFFER[arg1])
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -2534,13 +2537,13 @@ int int_reverse_safe(
     } break;
 
     case ref_cond_assign_s: /* cond_assign_s */
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
       res = (size_t)trunc(fabs(TARG2));
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 
       ASSIGN_A(Aarg1, ADJOINT_BUFFER[arg1])
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -2570,13 +2573,13 @@ int int_reverse_safe(
       break;
 
     case ref_cond_eq_assign_s: /* cond_eq_assign_s */
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
-      arg = tape.get_locint_r();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
+      arg = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.get_val_r();
+      coval = tape.loadNextReverse<ValInfo>();
       res = (size_t)trunc(fabs(TARG2));
-      rp_T[res] = tape.get_taylor();
+      rp_T[res] = tape.loadNextReverse<TayInfo>();
 
       ASSIGN_A(Aarg1, ADJOINT_BUFFER[arg1])
       ASSIGN_A(Ares, ADJOINT_BUFFER[res])
@@ -2610,8 +2613,8 @@ int int_reverse_safe(
 
       /*--------------------------------------------------------------------------*/
     case take_stock_op: /* take_stock_op */
-      res = tape.get_locint_r();
-      size = tape.get_locint_r();
+      res = tape.loadNextReverse<LocInfo>();
+      size = tape.loadNextReverse<LocInfo>();
 #if !defined(_NTIGHT_)
       tape.get_val_v_r(size);
 #endif /* !_NTIGHT_ */
@@ -2628,8 +2631,8 @@ int int_reverse_safe(
 
       /*--------------------------------------------------------------------------*/
     case death_not: /* death_not */
-      arg2 = tape.get_locint_r();
-      arg1 = tape.get_locint_r();
+      arg2 = tape.loadNextReverse<LocInfo>();
+      arg1 = tape.loadNextReverse<LocInfo>();
 
       for (size_t j = arg1; j <= arg2; j++) {
         ASSIGN_A(Aarg1, ADJOINT_BUFFER[j])
@@ -2638,16 +2641,16 @@ int int_reverse_safe(
 
 #if !defined(_NTIGHT_)
       for (size_t j = arg1; j <= arg2; j++)
-        rp_T[j] = tape.get_taylor();
+        rp_T[j] = tape.loadNextReverse<TayInfo>();
 #endif /* !_NTIGHT_ */
       break;
 
 #if !defined(_INT_REV_)
       /*--------------------------------------------------------------------------*/
     case ext_diff: { /* extern differntiated function */
-      m = static_cast<int>(tape.get_locint_r());
-      n = static_cast<int>(tape.get_locint_r());
-      tape.ext_diff_fct_index(tape.get_locint_r());
+      m = static_cast<int>(tape.loadNextReverse<LocInfo>());
+      n = static_cast<int>(tape.loadNextReverse<LocInfo>());
+      tape.ext_diff_fct_index(tape.loadNextReverse<LocInfo>());
       edfct = get_ext_diff_fct(tape.tapeId(), tape.ext_diff_fct_index());
       edfct->q = nrows;
 
@@ -2708,13 +2711,13 @@ int int_reverse_safe(
       if (edfct->dp_y_priorRequired) {
         arg = edfct->firstDepLocation + m - 1;
         for (int loop = 0; loop < m; ++loop, --arg) {
-          rp_T[arg] = tape.get_taylor();
+          rp_T[arg] = tape.loadNextReverse<TayInfo>();
         }
       }
       if (edfct->dp_x_changes) {
         arg = edfct->firstIndLocation + n - 1;
         for (int loop = 0; loop < n; ++loop, --arg) {
-          rp_T[arg] = tape.get_taylor();
+          rp_T[arg] = tape.loadNextReverse<TayInfo>();
         }
       }
 #ifdef _FOV_
@@ -2724,14 +2727,14 @@ int int_reverse_safe(
       break;
     }
     case ext_diff_iArr: /* extern differntiated function */
-      m = static_cast<int>(tape.get_locint_r());
-      n = static_cast<int>(tape.get_locint_r());
-      tape.ext_diff_fct_index(tape.get_locint_r());
-      iArrLength = tape.get_locint_r();
+      m = static_cast<int>(tape.loadNextReverse<LocInfo>());
+      n = static_cast<int>(tape.loadNextReverse<LocInfo>());
+      tape.ext_diff_fct_index(tape.loadNextReverse<LocInfo>());
+      iArrLength = tape.loadNextReverse<LocInfo>();
       iArr = new size_t[iArrLength];
       for (size_t loop = iArrLength; loop > 0; --loop)
-        iArr[loop - 1] = tape.get_locint_r();
-      tape.get_locint_r(); /* get it again */
+        iArr[loop - 1] = tape.loadNextReverse<LocInfo>();
+      tape.loadNextReverse<LocInfo>(); /* get it again */
       edfct = get_ext_diff_fct(tape.tapeId(), tape.ext_diff_fct_index());
       edfct->q = nrows;
 
@@ -2783,13 +2786,13 @@ int int_reverse_safe(
       if (edfct->dp_y_priorRequired) {
         arg = edfct->firstDepLocation + m - 1;
         for (int loop = 0; loop < m; ++loop, --arg) {
-          rp_T[arg] = tape.get_taylor();
+          rp_T[arg] = tape.loadNextReverse<TayInfo>();
         }
       }
       if (edfct->dp_x_changes) {
         arg = edfct->firstIndLocation + n - 1;
         for (int loop = 0; loop < n; ++loop, --arg) {
-          rp_T[arg] = tape.get_taylor();
+          rp_T[arg] = tape.loadNextReverse<TayInfo>();
         }
       }
 #ifdef _FOV_
@@ -2800,28 +2803,28 @@ int int_reverse_safe(
       iArr = nullptr;
       break;
     case ext_diff_v2: {
-      nout = tape.get_locint_r();
-      nin = tape.get_locint_r();
+      nout = tape.loadNextReverse<LocInfo>();
+      nin = tape.loadNextReverse<LocInfo>();
       insz = new size_t[2 * (nin + nout)];
       outsz = insz + nin;
       size_t *lowestXLoc_ext_v2 = outsz + nout;
       size_t *lowestYLoc_ext_v2 = outsz + nout + nin;
       for (size_t loop = nout; loop > 0; --loop) {
-        lowestYLoc_ext_v2[loop - 1] = tape.get_locint_r();
-        outsz[loop - 1] = tape.get_locint_r();
+        lowestYLoc_ext_v2[loop - 1] = tape.loadNextReverse<LocInfo>();
+        outsz[loop - 1] = tape.loadNextReverse<LocInfo>();
       }
       for (size_t loop = nin; loop > 0; --loop) {
-        lowestXLoc_ext_v2[loop - 1] = tape.get_locint_r();
-        insz[loop - 1] = tape.get_locint_r();
+        lowestXLoc_ext_v2[loop - 1] = tape.loadNextReverse<LocInfo>();
+        insz[loop - 1] = tape.loadNextReverse<LocInfo>();
       }
-      tape.get_locint_r(); /* nout again */
-      tape.get_locint_r(); /* nin again */
-      iArrLength = tape.get_locint_r();
+      tape.loadNextReverse<LocInfo>(); /* nout again */
+      tape.loadNextReverse<LocInfo>(); /* nin again */
+      iArrLength = tape.loadNextReverse<LocInfo>();
       iArr = new size_t[iArrLength];
       for (size_t loop = iArrLength; loop > 0; --loop)
-        iArr[loop - 1] = tape.get_locint_r();
-      tape.get_locint_r(); /* iArrLength again */
-      tape.ext_diff_fct_index(tape.get_locint_r());
+        iArr[loop - 1] = tape.loadNextReverse<LocInfo>();
+      tape.loadNextReverse<LocInfo>(); /* iArrLength again */
+      tape.ext_diff_fct_index(tape.loadNextReverse<LocInfo>());
       edfct2 = get_ext_diff_fct_v2(tape.tapeId(), tape.ext_diff_fct_index());
       edfct2->q = nrows;
 
@@ -2885,7 +2888,7 @@ int int_reverse_safe(
         for (size_t oloop = nout; oloop > 0; --oloop) {
           arg = lowestYLoc_ext_v2[oloop - 1] + outsz[oloop - 1] - 1;
           for (size_t loop = outsz[oloop - 1]; loop > 0; --loop) {
-            rp_T[arg] = tape.get_taylor();
+            rp_T[arg] = tape.loadNextReverse<TayInfo>();
             --arg;
           }
         }
@@ -2894,7 +2897,7 @@ int int_reverse_safe(
         for (size_t oloop = nin; oloop > 0; --oloop) {
           arg = lowestXLoc_ext_v2[oloop - 1] + insz[oloop - 1] - 1;
           for (size_t loop = insz[oloop - 1]; loop > 0; --loop) {
-            rp_T[arg] = tape.get_taylor();
+            rp_T[arg] = tape.loadNextReverse<TayInfo>();
             --arg;
           }
         }
@@ -2911,7 +2914,7 @@ int int_reverse_safe(
 #ifdef ADOLC_MEDIPACK_SUPPORT
       /*--------------------------------------------------------------------------*/
     case medi_call: {
-      locint mediIndex = tape.get_locint_r();
+      locint mediIndex = tape.loadNextReverse<LocInfo>();
       short tapeId = tape.tapeId();
 
 #if defined _FOS_
@@ -2997,7 +3000,7 @@ int int_reverse_safe(
     } /* endswitch */
 
     /* Get the next operation */
-    operation = tape.get_op_r();
+    operation = tape.loadNextReverse<OpInfo>();
   } /* endwhile */
 
   /* clean up */
