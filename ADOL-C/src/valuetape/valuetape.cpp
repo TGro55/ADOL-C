@@ -218,7 +218,7 @@ void ValueTape::taylor_close() {
   using TayInfo = ADOLC::detail::TayInfo<TapeInfos, ErrorType>;
   if (tapeInfos_.tayBuffer_.file() != nullptr) {
     if (keepTaylors() != 0) {
-      tapeInfos_.put_block<TayInfo>(perTapeInfos_.tay_fileName,
+      tapeInfos_.put_block<TayInfo>(tay_fileName(),
                                     tapeInfos_.tayBuffer_.position());
     }
   } else {
@@ -352,7 +352,7 @@ void ValueTape::save_params() {
       ip += chunk;
       if (ip < np)
         tapeInfos_.put_block<ValInfo<TapeInfos, ErrorType>>(
-            perTapeInfos_.val_fileName, tapeInfos_.valBuffer_.capacity());
+            val_fileName(), tapeInfos_.valBuffer_.capacity());
     }
   }
 }
@@ -396,7 +396,7 @@ void ValueTape::close_tape(int flag) {
   if (flag != 0 || (tapeInfos_.opBuffer_.file() != nullptr)) {
     if (tapeInfos_.opBuffer_.position() > 0) {
       tapeInfos_.put_block<OpInfo<TapeInfos, ErrorType>>(
-          perTapeInfos_.op_fileName, tapeInfos_.opBuffer_.position());
+          op_fileName(), tapeInfos_.opBuffer_.position());
     }
     tapestats(TapeInfos::OP_FILE_ACCESS, 1);
     tapeInfos_.opBuffer_.closeFile();
@@ -410,7 +410,7 @@ void ValueTape::close_tape(int flag) {
   if (flag != 0 || tapeInfos_.valBuffer_.file() != nullptr) {
     if (tapeInfos_.valBuffer_.position() != 0) {
       tapeInfos_.put_block<ValInfo<TapeInfos, ErrorType>>(
-          perTapeInfos_.val_fileName, tapeInfos_.valBuffer_.position());
+          val_fileName(), tapeInfos_.valBuffer_.position());
     }
     tapestats(TapeInfos::VAL_FILE_ACCESS, 1);
     tapeInfos_.valBuffer_.closeFile();
@@ -424,7 +424,7 @@ void ValueTape::close_tape(int flag) {
   if (flag != 0 || (tapeInfos_.locBuffer_.file() != nullptr)) {
     if (tapeInfos_.locBuffer_.position() != 0) {
       tapeInfos_.put_block<LocInfo<TapeInfos, ErrorType>>(
-          perTapeInfos_.loc_fileName, tapeInfos_.locBuffer_.position());
+          loc_fileName(), tapeInfos_.locBuffer_.position());
     }
     tapestats(TapeInfos::NUM_LOCATIONS, tapeInfos_.locBuffer_.numOnTape());
     tapestats(TapeInfos::LOC_FILE_ACCESS, 1);

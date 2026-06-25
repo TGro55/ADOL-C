@@ -8,23 +8,26 @@
 
 // should remain in a buffer, if we re-use a tape
 struct PersistantTapeInfos {
+  // storage order used by the tape I/O layer
+  enum FILES { OPERATIONS_FILE, LOCATIONS_FILE, VALUES_FILE, TAYLORS_FILE };
+  std::array<char *, 4> fileNames{};
   // tape types => used for file name generation
   enum TAPENAMES { LOCATIONS_TAPE, VALUES_TAPE, OPERATIONS_TAPE, TAYLORS_TAPE };
 
   ~PersistantTapeInfos();
   PersistantTapeInfos() = default;
   PersistantTapeInfos(short tapeId) {
-    op_fileName = createFileName(tapeId, OPERATIONS_TAPE);
-    loc_fileName = createFileName(tapeId, LOCATIONS_TAPE);
-    val_fileName = createFileName(tapeId, VALUES_TAPE);
-    tay_fileName = createFileName(tapeId, TAYLORS_TAPE);
+    fileNames[OPERATIONS_FILE] = createFileName(tapeId, OPERATIONS_TAPE);
+    fileNames[LOCATIONS_FILE] = createFileName(tapeId, LOCATIONS_TAPE);
+    fileNames[VALUES_FILE] = createFileName(tapeId, VALUES_TAPE);
+    fileNames[TAYLORS_FILE] = createFileName(tapeId, TAYLORS_TAPE);
   }
   PersistantTapeInfos(short tapeId, std::array<std::string, 4> &&tapeBaseNames)
       : tapeBaseNames_(std::move(tapeBaseNames)) {
-    op_fileName = createFileName(tapeId, OPERATIONS_TAPE);
-    loc_fileName = createFileName(tapeId, LOCATIONS_TAPE);
-    val_fileName = createFileName(tapeId, VALUES_TAPE);
-    tay_fileName = createFileName(tapeId, TAYLORS_TAPE);
+    fileNames[OPERATIONS_FILE] = createFileName(tapeId, OPERATIONS_TAPE);
+    fileNames[LOCATIONS_FILE] = createFileName(tapeId, LOCATIONS_TAPE);
+    fileNames[VALUES_FILE] = createFileName(tapeId, VALUES_TAPE);
+    fileNames[TAYLORS_FILE] = createFileName(tapeId, TAYLORS_TAPE);
   }
   PersistantTapeInfos(const PersistantTapeInfos &) = delete;
   PersistantTapeInfos(PersistantTapeInfos &&other) noexcept;
@@ -59,12 +62,6 @@ struct PersistantTapeInfos {
 
   // the base names of every tape type
   std::array<std::string, 4> tapeBaseNames_;
-
-  // file names
-  char *op_fileName{nullptr};
-  char *loc_fileName{nullptr};
-  char *val_fileName{nullptr};
-  char *tay_fileName{nullptr};
 
   //  - remember if tapes shall be written out to disk
   // - this information can only be given at taping time and must survive all

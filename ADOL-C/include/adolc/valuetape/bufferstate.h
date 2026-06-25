@@ -1,4 +1,5 @@
 #include <cassert>
+#include <concepts>
 #include <cstddef>
 #include <cstdio>
 #include <memory>
@@ -7,6 +8,34 @@
 #define ADOLC_BUFFER_STATE
 
 namespace ADOLC::detail {
+
+/**
+ * @brief Concept describing the primitive buffer/file interface used by tape
+ *        I/O code.
+ *
+ * This is the contract that generic tape algorithms expect from a concrete
+ * buffer wrapper such as BufferState<T>. Higher-level `Info` adapters should
+ * select a buffer that satisfies this concept instead of re-expressing these
+ * requirements themselves.
+ *
+ * @tparam T         Buffer wrapper type.
+ * @tparam ElementType Element type stored in the buffer.
+ */
+template <class T, class ElementType>
+concept BufferStateType =
+    requires(T &buffer, const T &constBuffer, const char *fileName,
+             const char *mode, size_t position, size_t numOnTape) {
+      { buffer.begin() } -> std::same_as<ElementType *>;
+      { constBuffer.begin() } -> std::same_as<const ElementType *>;
+      { buffer.file() } -> std::same_as<FILE *>;
+      { constBuffer.file() } -> std::same_as<FILE *>;
+      { constBuffer.position() } -> std::convertible_to<size_t>;
+      buffer.position(position);
+      { constBuffer.numOnTape() } -> std::convertible_to<size_t>;
+      buffer.numOnTape(numOnTape);
+      buffer.openFile(fileName, mode);
+      buffer.closeFile();
+    };
 
 struct FileDeleter {
   int operator()(FILE *file) { return fclose(file); }

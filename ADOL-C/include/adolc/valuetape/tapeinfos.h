@@ -8,7 +8,6 @@
 #include <adolc/valuetape/infotype.h>
 #include <array>
 #include <memory>
-#include <type_traits>
 
 using ADOLC::detail::InfoTypeBase;
 using ADOLCError::ErrorType;
@@ -121,13 +120,8 @@ struct TapeInfos {
    */
   template <InfoTypeBase<TapeInfos, ErrorType> Info>
   Info::value_type loadNextReverse() {
-    using TayInfo = ADOLC::detail::TayInfo<TapeInfos, ErrorType>;
     auto &buffer = Info::getBuffer(*this);
-    if constexpr (std::is_same_v<Info, TayInfo>) {
-      if (buffer.position() == 0) {
-        loadBlockIntoBufferReverse<Info>();
-      }
-    }
+    Info::ensureReverseReadable(*this);
     return buffer.retreatAndRead();
   }
   // writes the block of size depth of taylor coefficients from point loc to
@@ -209,30 +203,25 @@ struct TapeInfos {
    *  - Fails with CANNOT_REMOVE_FILE if an old tape file cannot be deleted.
    *
    * Notes:
-   *  - The actual file handle and buffer fields are provided by the Info
-   * adapter.
-   *  - The class itself does not know which concrete members are used; Info
-   * maps the generic operations to the appropriate TInfos fields.
+   *  - The selected buffer is provided by the Info adapter via
+   *    `Info::getBuffer(...)`.
    */
   template <InfoTypeBase<TapeInfos, ErrorType> Info>
   void openFile(const char *fileName) {
-    using TayInfo = ADOLC::detail::TayInfo<TapeInfos, ErrorType>;
+    using ADOLCError::fail;
     using ADOLCError::ErrorType::CANNOT_REMOVE_FILE;
-    if (Info::file(*this) == nullptr) {
-      if constexpr (!std::is_same_v<Info, TayInfo>) {
-        Info::openFile(*this, fileName);
-        if (Info::file(*this) != nullptr) {
-          fclose(Info::file(*this));
-          if (Info::removeFile(fileName)) {
+    auto &buffer = Info::getBuffer(*this);
+    if (buffer.file() == nullptr) {
+      if (Info::removeExistingBeforeWrite) {
+        buffer.openFile(fileName, "rb");
+        if (buffer.file() != nullptr) {
+          buffer.closeFile();
+          if (remove(fileName)) {
             fail(CANNOT_REMOVE_FILE, CURRENT_LOCATION);
           }
         }
-        Info::openFile(*this, fileName, "wb");
-      } else if constexpr (std::is_same_v<Info, TayInfo>) {
-        Info::openFile(*this, fileName, "w+b");
-      } else {
-        static_assert(!std::is_same_v<Info, Info>, "Not Implemented!");
       }
+      buffer.openFile(fileName, Info::openWriteMode);
     }
   }
 
@@ -262,7 +251,6 @@ struct TapeInfos {
   void put_block(const char *fileName, size_t lengthBlock) {
     using ADOLC::detail::write;
     using ADOLCError::fail;
-    using ADOLCError::ErrorType::CANNOT_REMOVE_FILE;
     using ADOLCError::ErrorType::TAPING_FATAL_IO_ERROR;
 
     openFile<Info>(fileName);
@@ -285,8 +273,9 @@ struct TapeInfos {
         fail(TAPING_FATAL_IO_ERROR, CURRENT_LOCATION);
     }
 
-    Info::setNum(*this, Info::getNum(*this) + lengthBlock);
-    Info::setPosition(*this, 0);
+    auto &buffer = Info::getBuffer(*this);
+    buffer.numOnTape(buffer.numOnTape() + lengthBlock);
+    buffer.position(0);
   }
   // functions for handling val tape
 
@@ -316,22 +305,23 @@ struct TapeInfos {
   template <InfoTypeBase<TapeInfos, ErrorType> Info>
   void loadBlockIntoBuffer(size_t blockSize) {
     using ADOLCError::fail;
+    auto &buffer = Info::getBuffer(*this);
 
     const size_t numChunks = blockSize / Info::chunkSize;
     for (size_t chunk = 0; chunk < numChunks; chunk++) {
       const auto ret =
-          fread(Info::bufferBegin(*this) + (chunk * Info::chunkSize),
+          fread(buffer.begin() + (chunk * Info::chunkSize),
                 Info::chunkSize * sizeof(typename Info::value_type), 1,
-                Info::file(*this));
+                buffer.file());
       if (ret != 1) {
         fail(Info::error, CURRENT_LOCATION);
       }
     }
     const size_t remain = blockSize % Info::chunkSize;
     if (remain != 0) {
-      const auto ret = fread(
-          Info::bufferBegin(*this) + (numChunks * Info::chunkSize),
-          remain * sizeof(typename Info::value_type), 1, Info::file(*this));
+      const auto ret =
+          fread(buffer.begin() + (numChunks * Info::chunkSize),
+                remain * sizeof(typename Info::value_type), 1, buffer.file());
       if (ret != 1) {
         fail(Info::error, CURRENT_LOCATION);
       }
@@ -345,22 +335,18 @@ struct TapeInfos {
    * `LOC_BUFFER_SIZE`, `VAL_BUFFER_SIZE`, or `TAY_BUFFER_SIZE`) from the
    * current file position, updates the number of remaining elements on tape,
    * and resets the selected buffer position to its first entry. For the value
-   * buffer it also advance the locations buffer by one.
+   * buffer it also advances the locations buffer by one.
    *
    * @tparam Info  Adapter describing which buffer/file pair to use.
    */
   template <InfoTypeBase<TapeInfos, ErrorType> Info>
   void loadBlockIntoBufferForward() {
-    using ValInfo = ADOLC::detail::ValInfo<TapeInfos, ErrorType>;
+    auto &buffer = Info::getBuffer(*this);
     const size_t blockSize =
-        MIN_ADOLC(stats[Info::bufferSize], Info::getNum(*this));
+        std::min(stats[Info::bufferSize], buffer.numOnTape());
     loadBlockIntoBuffer<Info>(blockSize);
-    Info::setNum(*this, Info::getNum(*this) - blockSize);
-    Info::setPosition(*this, 0);
-
-    if constexpr (std::is_same_v<Info, ValInfo>) {
-      locBuffer_.advance();
-    }
+    Info::updateBufferStatsForward(*this, blockSize);
+    Info::updateBufferPositionForward(*this);
   }
 
   /**
@@ -384,43 +370,18 @@ struct TapeInfos {
   template <InfoTypeBase<TapeInfos, ErrorType> Info>
   void loadBlockIntoBufferReverse() {
     using ADOLCError::fail;
-    using TayInfo = ADOLC::detail::TayInfo<TapeInfos, ErrorType>;
-    using LocInfo = ADOLC::detail::LocInfo<TapeInfos, ErrorType>;
-    using ValInfo = ADOLC::detail::ValInfo<TapeInfos, ErrorType>;
 
-    const size_t blockSize = stats[Info::bufferSize];
-    size_t pos = 0;
-    if constexpr (std::is_same_v<Info, TayInfo>) {
-      // Taylorcoefficients are not recorded during taping, thats why the number
-      // of Taylorcoefficients is not explicitly stored. Instead the number of
-      // blocks writte is stored.
-      lastTayBlockInCore = 0;
-      pos = static_cast<long>(sizeof(typename Info::value_type) *
-                              nextBufferNumber * blockSize);
-    } else {
-      pos = static_cast<long>(sizeof(typename Info::value_type) *
-                              (Info::getNum(*this) - blockSize));
-    }
-    const auto ret = fseek(Info::file(*this), pos, SEEK_SET);
+    auto &buffer = Info::getBuffer(*this);
+    const long pos = Info::reverseSeekOffset(*this, stats);
+    const auto ret = fseek(buffer.file(), pos, SEEK_SET);
     if (ret == -1) {
       fail(Info::error, CURRENT_LOCATION);
     }
+
+    const size_t blockSize = stats[Info::bufferSize];
     loadBlockIntoBuffer<Info>(blockSize);
-    if constexpr (!std::is_same_v<Info, TayInfo>) {
-      Info::setNum(*this, Info::getNum(*this) - blockSize);
-    } else {
-      --nextBufferNumber;
-    }
-    if constexpr (std::is_same_v<Info, LocInfo>) {
-      // skip unused tail space (stored on locBuffer)
-      const auto loc = blockSize - Info::getBufferVal(*this, blockSize - 1);
-      Info::setPosition(*this, loc);
-    } else if constexpr (std::is_same_v<Info, ValInfo>) {
-      // skip unused tail space (stored on LocBuffer)
-      Info::setPosition(*this, blockSize - locBuffer_.retreatAndRead());
-    } else {
-      Info::setPosition(*this, blockSize);
-    }
+    Info::updateBufferStatsReverse(*this, blockSize);
+    Info::updateBufferPositionReverse(*this, blockSize);
   }
   /****************************************************************************/
   /* Returns a pointer to the first element of a values vector and skips the  */
@@ -500,41 +461,6 @@ struct TapeInfos {
     }
     return 0;
   }
-
-/****************************************************************************/
-/*                                                          DEBUG FUNCTIONS */
-#ifdef ADOLC_HARDDEBUG
-  unsigned char get_op_f() {
-    unsigned char temp = opBuffer_.readAndAdvance();
-    fprintf(DIAG_OUT, "f_op: %i\n", temp - '\0'); /* why -'\0' ??? kowarz */
-    return temp;
-  }
-  unsigned char get_op_r() {
-    unsigned char temp = opBuffer_.retreatAndRead();
-    fprintf(DIAG_OUT, "r_op: %i\n", temp - '\0');
-    return temp;
-  }
-  size_t get_size_t_f() {
-    size_t temp = locBuffer_.readAndAdvance();
-    fprintf(DIAG_OUT, "f_loc: %i\n", temp);
-    return temp;
-  }
-  size_t get_size_t_r() {
-    size_t temp = locBuffer_.retreatAndRead();
-    fprintf(DIAG_OUT, "r_loc: %i\n", temp);
-    return temp;
-  }
-  double get_val_f() {
-    double temp = valBuffer_.readAndAdvance();
-    fprintf(DIAG_OUT, "f_val: %e\n", temp);
-    return temp;
-  }
-  double get_val_r() {
-    double temp = valBuffer_.retreatAndRead();
-    fprintf(DIAG_OUT, "r_val: %e\n", temp);
-    return temp;
-  }
-#endif
 
   size_t get_val_space(const char *op_fileName, const char *val_fileName);
 };

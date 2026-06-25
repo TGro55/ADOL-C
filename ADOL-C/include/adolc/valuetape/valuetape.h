@@ -151,14 +151,30 @@ public:
   double *paramstore() const { return perTapeInfos_.paramstore; }
   void paramstore(double *params) { perTapeInfos_.paramstore = params; }
 
-  char *tay_fileName() const { return perTapeInfos_.tay_fileName; }
-  char *op_fileName() const { return perTapeInfos_.op_fileName; }
-  char *loc_fileName() const { return perTapeInfos_.loc_fileName; }
-  char *val_fileName() const { return perTapeInfos_.val_fileName; }
-  void tay_fileName(char *name) { perTapeInfos_.tay_fileName = name; }
-  void op_fileName(char *name) { perTapeInfos_.op_fileName = name; }
-  void loc_fileName(char *name) { perTapeInfos_.loc_fileName = name; }
-  void val_fileName(char *name) { perTapeInfos_.val_fileName = name; }
+  char *tay_fileName() const {
+    return perTapeInfos_.fileNames[PersistantTapeInfos::TAYLORS_FILE];
+  }
+  char *op_fileName() const {
+    return perTapeInfos_.fileNames[PersistantTapeInfos::OPERATIONS_FILE];
+  }
+  char *loc_fileName() const {
+    return perTapeInfos_.fileNames[PersistantTapeInfos::LOCATIONS_FILE];
+  }
+  char *val_fileName() const {
+    return perTapeInfos_.fileNames[PersistantTapeInfos::VALUES_FILE];
+  }
+  void tay_fileName(char *name) {
+    perTapeInfos_.fileNames[PersistantTapeInfos::TAYLORS_FILE] = name;
+  }
+  void op_fileName(char *name) {
+    perTapeInfos_.fileNames[PersistantTapeInfos::OPERATIONS_FILE] = name;
+  }
+  void loc_fileName(char *name) {
+    perTapeInfos_.fileNames[PersistantTapeInfos::LOCATIONS_FILE] = name;
+  }
+  void val_fileName(char *name) {
+    perTapeInfos_.fileNames[PersistantTapeInfos::VALUES_FILE] = name;
+  }
   int keepTape() const { return perTapeInfos_.keepTape; }
   void keepTape(int flag) { perTapeInfos_.keepTape = flag; }
   int jacSolv_nax() const { return perTapeInfos_.jacSolv_nax; }
@@ -585,25 +601,11 @@ public:
   /**
    * @brief Return the tape file name associated with the given Info adapter.
    *
-   * Maps an Info type (Op/Loc/Val) to the corresponding per-tape filename
-   * stored in perTapeInfos_. This is used to open the correct backing file for
-   * the current sweep.
-   *
-   * Note:
-   *  - Only OpInfoT, LocInfoT, ValInfoT are supported here.
-   *  - TayInfo is intentionally not part of this dispatch (different
-   * lifecycle).
+   * The index is supplied by the Info adapter so the caller does not branch on
+   * concrete tape kinds.
    */
-  template <InfoType<TapeInfos, ErrorType> Info> const char *fileName() {
-    if constexpr (std::is_same_v<Info, OpInfoT>)
-      return perTapeInfos_.op_fileName;
-    else if constexpr (std::is_same_v<Info, LocInfoT>)
-      return perTapeInfos_.loc_fileName;
-    else if constexpr (std::is_same_v<Info, ValInfoT>)
-      return perTapeInfos_.val_fileName;
-
-    else
-      static_assert(!std::is_same_v<Info, Info>, "Not Implemented!");
+  template <InfoTypeBase<TapeInfos, ErrorType> Info> const char *fileName() {
+    return perTapeInfos_.fileNames[Info::fileIndex];
   }
 
   /// Simple type list used to run prepare_* for all tape types via
@@ -621,9 +623,9 @@ public:
    *
    * The logic is:
    *  - optionally read a block into buffer (up to bufferSize)
-   *  - set the remaining element count (Info::num) to what is still left on
-   * disk after the preload
-   *  - initialize the current buffer pointer (Info::curr)
+   *  - set the remaining element count on the selected buffer to what is
+   *    still left on disk after the preload
+   *  - initialize the current buffer position
    *
    * If nothing was written to disk, we assume all data is already in memory
    * and only initialize the counters/pointers accordingly.
@@ -634,8 +636,9 @@ public:
    */
   template <InfoType<TapeInfos, ErrorType> Info> void prepare_for() {
     size_t blockSize = 0;
+    auto &buffer = Info::getBuffer(tapeInfos_);
     if (tapestats(Info::fileAccess) == 1) {
-      Info::openFile(tapeInfos_, fileName<Info>());
+      buffer.openFile(fileName<Info>(), "rb");
 
       // preload at most one block, but never more than total elements on tape
       blockSize = std::min(tapestats(Info::bufferSize), tapestats(Info::num));
@@ -643,18 +646,8 @@ public:
       // remaining elements still residing on disk (not yet in buffer)
       blockSize = tapestats(Info::num) - blockSize;
     }
-    Info::setNum(tapeInfos_, blockSize);
-    if constexpr (std::is_same_v<Info, LocInfoT>) {
-      // location pointer initialization depends on statSpace bookkeeping
-      size_t numLocsForStats = statSpace;
-      while (numLocsForStats >= tapestats(Info::bufferSize)) {
-        loadBlockIntoBufferForward<LocInfo<TapeInfos, ErrorType>>();
-        numLocsForStats -= tapestats(Info::bufferSize);
-      }
-      Info::setPosition(tapeInfos_, numLocsForStats);
-    } else {
-      Info::setPosition(tapeInfos_, 0);
-    }
+    buffer.numOnTape(blockSize);
+    Info::prepareForwardPosition(tapeInfos_, tapeInfos_.stats);
   }
 
   /**
@@ -673,8 +666,9 @@ public:
     auto number = (tapestats(Info::num) / tapestats(Info::bufferSize)) *
                   tapestats(Info::bufferSize);
     auto offset = static_cast<long>(number * sizeof(typename Info::value_type));
-    Info::openFile(tapeInfos_, fileName<Info>());
-    fseek(Info::file(tapeInfos_), offset, SEEK_SET);
+    auto &buffer = Info::getBuffer(tapeInfos_);
+    buffer.openFile(fileName<Info>(), "rb");
+    fseek(buffer.file(), offset, SEEK_SET);
   }
 
   /**
@@ -685,16 +679,17 @@ public:
    * partial) final block into the in-memory buffer.
    *
    * After the preload:
-   *  - Info::num is set to the number of elements still remaining on disk
-   *    before the loaded block.
-   *  - Info::curr is set to the end of the loaded region inside the buffer
-   *    (bufferBegin + blockSize), so reverse logic can walk backwards.
+   *  - the selected buffer stores the number of elements still remaining on
+   *    disk before the loaded block
+   *  - the selected buffer position is moved to the logical end of the loaded
+   *    region so reverse logic can walk backwards
    *
    * If nothing was written to disk, we assume all data is already in memory
    * and only initialize the counters/pointers accordingly.
    */
   template <InfoType<TapeInfos, ErrorType> Info> void prepare_rev() {
     size_t blockSize = tapestats(Info::num);
+    auto &buffer = Info::getBuffer(tapeInfos_);
     if (tapestats(Info::fileAccess) == 1) {
       setFilePosition<Info>();
 
@@ -702,8 +697,8 @@ public:
       blockSize = tapestats(Info::num) % tapestats(Info::bufferSize);
       tapeInfos_.loadBlockIntoBuffer<Info>(blockSize);
     }
-    Info::setNum(tapeInfos_, tapestats(Info::num) - blockSize);
-    Info::setPosition(tapeInfos_, blockSize);
+    buffer.numOnTape(tapestats(Info::num) - blockSize);
+    buffer.position(blockSize);
   }
 
   /**

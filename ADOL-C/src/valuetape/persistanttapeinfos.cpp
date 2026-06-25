@@ -21,46 +21,27 @@ PersistantTapeInfos::~PersistantTapeInfos() {
   myfree1(forodec_z);
   myfree1(forodec_y);
 
-  if (op_fileName) {
-    if (keepTape == 0 || skipFileCleanup == 0)
-      remove(op_fileName);
-    delete[] op_fileName;
-    op_fileName = nullptr;
-  }
-  if (val_fileName) {
-    if (keepTape == 0 || skipFileCleanup == 0)
-      remove(val_fileName);
-    delete[] val_fileName;
-    val_fileName = nullptr;
-  }
-
-  if (loc_fileName) {
-    if (keepTape == 0 || skipFileCleanup == 0)
-      remove(loc_fileName);
-    delete[] loc_fileName;
-    loc_fileName = nullptr;
-  }
-
-  if (tay_fileName) {
-    if (keepTape == 0 || skipFileCleanup == 0)
-      remove(tay_fileName);
-    delete[] tay_fileName;
-    tay_fileName = nullptr;
+  for (auto &fileName : fileNames) {
+    if (fileName) {
+      if (keepTape == 0 || skipFileCleanup == 0)
+        remove(fileName);
+      delete[] fileName;
+      fileName = nullptr;
+    }
   }
 }
 
 PersistantTapeInfos::PersistantTapeInfos(PersistantTapeInfos &&other) noexcept
-    : forodec_nax(other.forodec_nax), forodec_dax(other.forodec_dax),
-      forodec_y(other.forodec_y), forodec_z(other.forodec_z),
-      forodec_Z(other.forodec_Z), jacSolv_J(other.jacSolv_J),
-      jacSolv_I(other.jacSolv_I), jacSolv_xold(other.jacSolv_xold),
-      jacSolv_ri(other.jacSolv_ri), jacSolv_ci(other.jacSolv_ci),
-      jacSolv_nax(other.jacSolv_nax), jacSolv_modeold(other.jacSolv_modeold),
-      jacSolv_cgd(other.jacSolv_cgd), op_fileName(other.op_fileName),
-      loc_fileName(other.loc_fileName), val_fileName(other.val_fileName),
-      tay_fileName(other.tay_fileName), keepTape(other.keepTape),
-      skipFileCleanup(other.skipFileCleanup), paramstore(other.paramstore) {
-
+    : fileNames(std::move(other.fileNames)), forodec_nax(other.forodec_nax),
+      forodec_dax(other.forodec_dax), forodec_y(other.forodec_y),
+      forodec_z(other.forodec_z), forodec_Z(other.forodec_Z),
+      jacSolv_J(other.jacSolv_J), jacSolv_I(other.jacSolv_I),
+      jacSolv_xold(other.jacSolv_xold), jacSolv_ri(other.jacSolv_ri),
+      jacSolv_ci(other.jacSolv_ci), jacSolv_nax(other.jacSolv_nax),
+      jacSolv_modeold(other.jacSolv_modeold), jacSolv_cgd(other.jacSolv_cgd),
+      tapeBaseNames_(std::move(other.tapeBaseNames_)),
+      keepTape(other.keepTape), skipFileCleanup(other.skipFileCleanup),
+      paramstore(other.paramstore) {
   other.forodec_y = nullptr;
   other.forodec_z = nullptr;
   other.forodec_Z = nullptr;
@@ -69,13 +50,7 @@ PersistantTapeInfos::PersistantTapeInfos(PersistantTapeInfos &&other) noexcept
   other.jacSolv_xold = nullptr;
   other.jacSolv_ri = nullptr;
   other.jacSolv_ci = nullptr;
-
-  // file names
-  other.op_fileName = nullptr;
-  other.loc_fileName = nullptr;
-  other.val_fileName = nullptr;
-  other.tay_fileName = nullptr;
-
+  other.fileNames.fill(nullptr);
   other.paramstore = nullptr;
 }
 PersistantTapeInfos &
@@ -92,11 +67,9 @@ PersistantTapeInfos::operator=(PersistantTapeInfos &&other) noexcept {
     delete[] jacSolv_ri;
     delete[] jacSolv_ci;
 
-    // file names
-    delete[] op_fileName;
-    delete[] loc_fileName;
-    delete[] val_fileName;
-    delete[] tay_fileName;
+    for (auto &fileName : fileNames) {
+      delete[] fileName;
+    }
     delete[] paramstore;
 
     forodec_nax = other.forodec_nax;
@@ -112,10 +85,8 @@ PersistantTapeInfos::operator=(PersistantTapeInfos &&other) noexcept {
     jacSolv_nax = other.jacSolv_nax;
     jacSolv_modeold = other.jacSolv_modeold;
     jacSolv_cgd = other.jacSolv_cgd;
-    op_fileName = other.op_fileName;
-    loc_fileName = other.loc_fileName;
-    val_fileName = other.val_fileName;
-    tay_fileName = other.tay_fileName;
+    tapeBaseNames_ = std::move(other.tapeBaseNames_);
+    fileNames = std::move(other.fileNames);
     keepTape = other.keepTape;
     skipFileCleanup = other.skipFileCleanup;
     paramstore = other.paramstore;
@@ -130,11 +101,7 @@ PersistantTapeInfos::operator=(PersistantTapeInfos &&other) noexcept {
   other.jacSolv_ri = nullptr;
   other.jacSolv_ci = nullptr;
 
-  // file names
-  other.op_fileName = nullptr;
-  other.loc_fileName = nullptr;
-  other.val_fileName = nullptr;
-  other.tay_fileName = nullptr;
+  other.fileNames.fill(nullptr);
 
   other.paramstore = nullptr;
   return *this;
