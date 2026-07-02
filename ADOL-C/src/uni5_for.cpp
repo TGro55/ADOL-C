@@ -830,9 +830,9 @@ int hov_forward(
 #endif
 #endif
 {
-  using ValInfo = ValInfo<TapeInfos, ErrorType>;
-  using LocInfo = LocInfo<TapeInfos, ErrorType>;
-  using OpInfo = OpInfo<TapeInfos, ErrorType>;
+  using ValInfo = ADOLC::detail::ValInfo<RecordingContext, ErrorType>;
+  using LocInfo = ADOLC::detail::LocInfo<RecordingContext, ErrorType>;
+  using OpInfo = ADOLC::detail::OpInfo<RecordingContext, ErrorType>;
   ValueTape &tape = findTape(tnum);
   /****************************************************************************/
   /*                                                            ALL VARIABLES */

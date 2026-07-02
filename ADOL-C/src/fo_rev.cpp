@@ -296,11 +296,11 @@ int int_reverse_safe(
 #endif
 #endif
 {
-  using ValInfo = ADOLC::detail::ValInfo<TapeInfos, ErrorType>;
-  using LocInfo = ADOLC::detail::LocInfo<TapeInfos, ErrorType>;
-  using OpInfo = ADOLC::detail::OpInfo<TapeInfos, ErrorType>;
+  using ValInfo = ADOLC::detail::ValInfo<RecordingContext, ErrorType>;
+  using LocInfo = ADOLC::detail::LocInfo<RecordingContext, ErrorType>;
+  using OpInfo = ADOLC::detail::OpInfo<RecordingContext, ErrorType>;
 #if !defined(_INT_REV_) || !defined(_NTIGHT_)
-  using TayInfo = ADOLC::detail::TayInfo<TapeInfos, ErrorType>;
+  using TayInfo = ADOLC::detail::TayInfo<RecordingContext, ErrorType>;
 #endif
   ValueTape &tape = findTape(tnum);
   /****************************************************************************/

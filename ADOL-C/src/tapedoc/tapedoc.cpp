@@ -230,9 +230,9 @@ void tape_doc(short tnum,     /* tape id */
               const double *, /* independent variable values */
               double *)       /* dependent variable values */
 {
-  using LocInfo = LocInfo<TapeInfos, ErrorType>;
-  using OpInfo = OpInfo<TapeInfos, ErrorType>;
-  using ValInfo = ValInfo<TapeInfos, ErrorType>;
+  using LocInfo = ADOLC::detail::LocInfo<RecordingContext, ErrorType>;
+  using OpInfo = ADOLC::detail::OpInfo<RecordingContext, ErrorType>;
+  using ValInfo = ADOLC::detail::ValInfo<RecordingContext, ErrorType>;
   /****************************************************************************/
   /*                                                            ALL VARIABLES */
   unsigned char operation;

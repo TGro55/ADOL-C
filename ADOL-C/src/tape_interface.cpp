@@ -51,8 +51,9 @@ int trace_on(short tapeId, int keepTaylors) {
   tape.keepTaylors(keepTaylors);
   tape.tapestats(TapeInfos::NO_MIN_MAX, tape.nominmaxFlag());
 
-  if (keepTaylors)
+  if (keepTaylors != 0) {
     tape.deg_save(1);
+  }
   tape.start_trace();
   tape.take_stock(); /* record all existing adoubles on the tape */
 
@@ -73,7 +74,6 @@ int trace_on(short tapeId, int keepTaylors, size_t obs, size_t lbs, size_t vbs,
     tape.mediInitTape(tapeId);
 #endif
     // reset the tape buffers
-    tape.freeTapeResources();
     tape.tapestats(TapeInfos::OP_BUFFER_SIZE, obs);
     tape.tapestats(TapeInfos::LOC_BUFFER_SIZE, lbs);
     tape.tapestats(TapeInfos::VAL_BUFFER_SIZE, vbs);
@@ -96,9 +96,10 @@ void trace_off(int flag) {
   using ADOLCError::ErrorType::TAPING_NOT_ACTUALLY_TAPING;
 
   ValueTape &tape = currentTape();
-  if (tape.workMode() != TapeInfos::WRITE_ACCESS)
+  if (tape.workMode() != TapeInfos::WRITE_ACCESS) {
     fail(TAPING_NOT_ACTUALLY_TAPING, CURRENT_LOCATION,
          FailInfo{.info1 = tape.tapeId()});
+  }
   tape.keepTape(flag);
   tape.keep_stock(); /* copy remaining live variables + trace_flag = 0 */
   tape.stop_trace(flag);
