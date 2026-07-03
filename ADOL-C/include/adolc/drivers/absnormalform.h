@@ -18,7 +18,7 @@ namespace ADOLC {
  * - `n`: number of independent variables
  * - `s`: number of switching variables
  */
-ADOLC_API struct DenseShape : ANFShape {
+struct DenseShape : ANFShape {
   size_t m{};
   size_t n{};
   size_t s{};
@@ -36,7 +36,7 @@ DenseShape getShapeFromTape(short tapeId);
  * and `L` provide row-pointer views compatible with the existing driver
  * interfaces.
  */
-ADOLC_API struct AbsNormalForm {
+struct AbsNormalForm {
   using Shape = DenseShape;
 
   /// Principal dimensions of the represented ABS-normal form.
