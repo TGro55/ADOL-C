@@ -65,8 +65,8 @@ using ValInfoT = ValInfo<RecordingContext, ErrorType>;
 
 class ADOLC_API ValueTape {
   TapeRecordingContext recordingContext_;
-  TapeInfos tapeInfos_;
   GlobalTapeVarsCL globalTapeVars_;
+  TapeInfos tapeInfos_;
   PersistantTapeInfos perTapeInfos_;
 
 #define EDFCTS_BLOCK_SIZE 10
@@ -92,8 +92,7 @@ public:
 
   // a tape always need a tapeId,
   ValueTape() = delete;
-  explicit ValueTape(short tapeId)
-      : tapeInfos_(tapeId), perTapeInfos_(tapeId, readConfigFile()) {}
+  explicit ValueTape(short tapeId) : tapeInfos_(tapeId, readConfigFile()) {}
 
   // copying ValueTape is not allowed!
   ValueTape(const ValueTape &other) = delete;
@@ -101,8 +100,8 @@ public:
 
   ValueTape(ValueTape &&other) noexcept
       : recordingContext_(std::move(other.recordingContext_)),
-        tapeInfos_(std::move(other.tapeInfos_)),
         globalTapeVars_(std::move(other.globalTapeVars_)),
+        tapeInfos_(std::move(other.tapeInfos_)),
         perTapeInfos_(std::move(other.perTapeInfos_)),
         ext_buffer_(std::move(other.ext_buffer_)),
         ext2_buffer_(std::move(other.ext2_buffer_)),
@@ -147,41 +146,41 @@ public:
 
   // Interface to PersistentTapeInfos
   void tapeBaseNames(size_t loc, const std::string &baseName) {
-    perTapeInfos_.tapeBaseNames_[loc] = baseName;
+    tapeInfos_.tapeBaseNames_[loc] = baseName;
   }
   void skipFileCleanup(int skipFileCleanup) {
-    perTapeInfos_.skipFileCleanup = skipFileCleanup;
+    tapeInfos_.skipFileCleanup = skipFileCleanup;
   }
-  int skipFileCleanup() const { return perTapeInfos_.skipFileCleanup; }
+  int skipFileCleanup() const { return tapeInfos_.skipFileCleanup; }
   double *paramstore() const { return perTapeInfos_.paramstore; }
   void paramstore(double *params) { perTapeInfos_.paramstore = params; }
 
   char *tay_fileName() const {
-    return perTapeInfos_.fileNames[PersistantTapeInfos::TAYLORS_FILE];
+    return tapeInfos_.fileNames[TapeInfos::TAYLORS_FILE];
   }
   char *op_fileName() const {
-    return perTapeInfos_.fileNames[PersistantTapeInfos::OPERATIONS_FILE];
+    return tapeInfos_.fileNames[TapeInfos::OPERATIONS_FILE];
   }
   char *loc_fileName() const {
-    return perTapeInfos_.fileNames[PersistantTapeInfos::LOCATIONS_FILE];
+    return tapeInfos_.fileNames[TapeInfos::LOCATIONS_FILE];
   }
   char *val_fileName() const {
-    return perTapeInfos_.fileNames[PersistantTapeInfos::VALUES_FILE];
+    return tapeInfos_.fileNames[TapeInfos::VALUES_FILE];
   }
   void tay_fileName(char *name) {
-    perTapeInfos_.fileNames[PersistantTapeInfos::TAYLORS_FILE] = name;
+    tapeInfos_.fileNames[TapeInfos::TAYLORS_FILE] = name;
   }
   void op_fileName(char *name) {
-    perTapeInfos_.fileNames[PersistantTapeInfos::OPERATIONS_FILE] = name;
+    tapeInfos_.fileNames[TapeInfos::OPERATIONS_FILE] = name;
   }
   void loc_fileName(char *name) {
-    perTapeInfos_.fileNames[PersistantTapeInfos::LOCATIONS_FILE] = name;
+    tapeInfos_.fileNames[TapeInfos::LOCATIONS_FILE] = name;
   }
   void val_fileName(char *name) {
-    perTapeInfos_.fileNames[PersistantTapeInfos::VALUES_FILE] = name;
+    tapeInfos_.fileNames[TapeInfos::VALUES_FILE] = name;
   }
-  int keepTape() const { return perTapeInfos_.keepTape; }
-  void keepTape(int flag) { perTapeInfos_.keepTape = flag; }
+  int keepTape() const { return tapeInfos_.keepTape; }
+  void keepTape(int flag) { tapeInfos_.keepTape = flag; }
   int jacSolv_nax() const { return perTapeInfos_.jacSolv_nax; }
   int *jacSolv_ci() const { return perTapeInfos_.jacSolv_ci; }
   int *jacSolv_ri() const { return perTapeInfos_.jacSolv_ri; }
@@ -637,7 +636,7 @@ public:
    */
   template <InfoType<TapeRecordingContext, ErrorType> Info>
   const char *fileName() {
-    return perTapeInfos_.fileNames[Info::fileIndex];
+    return tapeInfos_.fileNames[Info::fileIndex];
   }
 
   /// Simple type list used to run prepare_* for all tape types via

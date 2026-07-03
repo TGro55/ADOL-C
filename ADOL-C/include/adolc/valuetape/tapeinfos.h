@@ -6,7 +6,11 @@
 #include <adolc/oplate.h>
 #include <adolc/valuetape/bufferstate.h>
 #include <array>
-#include <memory>
+#include <atomic> /* handling file names over different threads*/
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <utility>
 
 using ADOLCError::ErrorType;
 struct TapeInfos {
@@ -36,20 +40,116 @@ struct TapeInfos {
   // modes for the tape evaluation; set by functions like "fos_forward"
   enum WORKMODES { NO_MODE, WRITE_ACCESS, READ_ACCESS };
 
-  ~TapeInfos() = default;
+  // storage order used by the tape I/O layer
+  enum FILES { OPERATIONS_FILE, LOCATIONS_FILE, VALUES_FILE, TAYLORS_FILE };
+
+  // tape types => used for file name generation
+  enum TAPENAMES { LOCATIONS_TAPE, VALUES_TAPE, OPERATIONS_TAPE, TAYLORS_TAPE };
+
+  ~TapeInfos() {
+    for (auto &fileName : fileNames) {
+      if (fileName) {
+        if (keepTape == 0 || skipFileCleanup == 0)
+          remove(fileName);
+        delete[] fileName;
+        fileName = nullptr;
+      }
+    }
+  };
   TapeInfos() = default;
-  TapeInfos(short tapeId) : tapeId_(tapeId) {};
-  TapeInfos(const TapeInfos &) = default;
-  TapeInfos &operator=(const TapeInfos &) = default;
-  TapeInfos(TapeInfos &&other) noexcept = default;
-  TapeInfos &operator=(TapeInfos &&other) noexcept = default;
+  explicit TapeInfos(short tapeId) : tapeId_(tapeId) {
+    fileNames[OPERATIONS_FILE] = createFileName(tapeId, OPERATIONS_TAPE);
+    fileNames[LOCATIONS_FILE] = createFileName(tapeId, LOCATIONS_TAPE);
+    fileNames[VALUES_FILE] = createFileName(tapeId, VALUES_TAPE);
+    fileNames[TAYLORS_FILE] = createFileName(tapeId, TAYLORS_TAPE);
+  };
+  TapeInfos(short tapeId, std::array<std::string, 4> &&tapeBaseNames)
+      : tapeBaseNames_(std::move(tapeBaseNames)), tapeId_(tapeId) {
+    fileNames[OPERATIONS_FILE] = createFileName(tapeId, OPERATIONS_TAPE);
+    fileNames[LOCATIONS_FILE] = createFileName(tapeId, LOCATIONS_TAPE);
+    fileNames[VALUES_FILE] = createFileName(tapeId, VALUES_TAPE);
+    fileNames[TAYLORS_FILE] = createFileName(tapeId, TAYLORS_TAPE);
+  };
+  TapeInfos(const TapeInfos &) = delete;
+  TapeInfos &operator=(const TapeInfos &) = delete;
+  TapeInfos(TapeInfos &&other) noexcept
+      : stats(other.stats), fileNames(other.fileNames),
+        tapeBaseNames_(std::move(other.tapeBaseNames_)), tapeId_(other.tapeId_),
+        workMode(other.workMode), keepTape(other.keepTape),
+        skipFileCleanup(other.skipFileCleanup) {
+    other.fileNames.fill(nullptr);
+  }
+  TapeInfos &operator=(TapeInfos &&other) noexcept {
+    if (this != &other) {
+      for (auto &fileName : fileNames) {
+        delete[] fileName;
+      }
+      stats = std::move(other.stats);
+      tapeBaseNames_ = std::move(other.tapeBaseNames_);
+      fileNames = std::move(other.fileNames);
+      tapeId_ = other.tapeId_;
+      workMode = other.workMode;
+      keepTape = other.keepTape;
+      skipFileCleanup = other.skipFileCleanup;
+      other.fileNames.fill(nullptr);
+    }
+    return *this;
+  }
 
   std::array<size_t, STAT_SIZE> stats{};
-
+  std::array<char *, 4> fileNames{};
+  // the base names of every tape type
+  std::array<std::string, 4> tapeBaseNames_;
   short tapeId_{-1};
   WORKMODES workMode{NO_MODE};
 
   constexpr static size_t maxLocsPerOp{10}; // used in tape_loc_...
+
+  //  - remember if tapes shall be written out to disk
+  // - this information can only be given at taping time and must survive all
+  // other actions on the tape
+  int keepTape{0};
+
+  // defaults to 0, if 1 skips file removal (when file operations are costly)
+  int skipFileCleanup{0};
+
+  /****************************************************************************/
+  /* Tries to read a local config file containing, e.g., buffer sizes */
+  /****************************************************************************/
+  static char *duplicatestr(const char *instr) {
+    size_t len = std::strlen(instr);
+    char *outstr = new char[len + 1];
+    std::strncpy(outstr, instr, len);
+    return outstr;
+  }
+
+  /**
+   * @brief Generates an id for the thread within the function is called
+   *
+   * @return id of the current thread
+   */
+  int getThreadIndex() {
+    static std::atomic<int> nextId{0};
+    thread_local int id = nextId++;
+    return id;
+  }
+  /****************************************************************************/
+  /* Returns the char*: tapeBaseName+thread-threadNumber+tapeId+.tap+\0       */
+  /* The result string must be freed be the caller!                           */
+  /****************************************************************************/
+  char *createFileName(short tapeId, int tapeType) {
+    std::string fileName(tapeBaseNames_[tapeType]);
+
+    int threadId = getThreadIndex();
+    fileName += "thread-" + std::to_string(threadId) + "_";
+
+    fileName += "tape-" + std::to_string(tapeId) + ".tap";
+
+    // don't forget space for null termination
+    char *ret_char = new char[fileName.size() + 1];
+    std::strcpy(ret_char, fileName.c_str()); // ensures null terminatoin
+    return ret_char;
+  }
 };
 
 #endif // ADOLC_TAPEINFOS_H
