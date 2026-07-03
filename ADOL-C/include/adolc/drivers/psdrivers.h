@@ -31,7 +31,7 @@ namespace ADOLC {
  *   form data has been populated.
  * - `UpdateConsts::False` leaves `cy` and `cz` untouched.
  */
-ADOLC_API enum class UpdateConsts {
+enum class UpdateConsts {
   True,
   False,
 };
