@@ -103,6 +103,12 @@ add_feature_info(BUILD_INTERFACE BUILD_INTERFACE "build the C interface library 
 # build the tests
 option(BUILD_TESTS OFF)
 
+# Run clang-tidy as part of compiling the ADOL-C target. This is opt-in because
+# the legacy code base still has a sizeable tidy baseline.
+option(ENABLE_CLANG_TIDY "Run clang-tidy during ADOL-C builds" FALSE)
+add_feature_info(ENABLE_CLANG_TIDY ENABLE_CLANG_TIDY
+                 "run clang-tidy during ADOL-C builds")
+
 
 # definition of library target
 # ----------------------------
@@ -126,6 +132,13 @@ endif()
 
 
 target_compile_features(adolc PUBLIC cxx_std_20)
+
+if(ENABLE_CLANG_TIDY)
+  find_program(CLANG_TIDY_EXE NAMES clang-tidy REQUIRED)
+  set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+  set_target_properties(adolc PROPERTIES
+    CXX_CLANG_TIDY "${CLANG_TIDY_EXE};--quiet")
+endif()
 
 # Make the version of ADOL-C available as compile definitions
 target_compile_definitions(adolc PRIVATE

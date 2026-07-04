@@ -53,6 +53,7 @@ Customize the build with the following options
 
   `-DBUILD_SHARED_LIBS=0` Build as shared library (default=True)
 
+  `-DENABLE_CLANG_TIDY=1` Run clang-tidy during compilation (default=False)
 
 
 ## Examples
