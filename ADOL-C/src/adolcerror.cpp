@@ -473,9 +473,10 @@ void fail(ErrorType error, source_location LocInfo, const FailInfo &failinfo) {
     break;
 
   case to_underlying(ErrorType::REVERSE_NO_FOWARD):
-    oss << "ADOL-C error: reverse fails because it was not "
-           "preceded by a forward sweep with degree>"
-        << failinfo.info3 << ", keep=" << failinfo.info4 << "!\n";
+    oss << "ADOL-C error: reverse sweep requires valid Taylor coefficients.\n"
+        << "Run a forward sweep with degree>" << failinfo.info3
+        << ", keep>=" << failinfo.info4
+        << " before reverse, including after setParamVec().\n";
     throw ADOLCError(oss.str(), LocInfo);
     break;
   case to_underlying(ErrorType::ACTIVE_SUBSCRIPTING):

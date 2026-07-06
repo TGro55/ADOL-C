@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <limits>
 #include <memory>
+#include <span>
 #include <stack>
 #include <type_traits>
 
@@ -851,14 +852,23 @@ public:
   /* Discards parameters from the end of value tape during reverse mode */
   /****************************************************************************/
   void discard_params_r();
-  /****************************************************************************/
-  /* Overrides the parameters for the next evaluations. This will invalidate
+  /**
+   * @brief Update parameter values used by subsequent evaluations.
+   *
+   * Replaces the values stored for all pdouble parameters on this tape. The
+   * number of supplied values must match the number of parameters recorded on
+   * the tape.
+   *
+   * @param paramvec New parameter values in tape-location order.
+   *
+   * @note This invalidates saved Taylor coefficients. Any reverse sweep after
+   * this call must be preceded by a forward sweep with `keep >= 1`, for example
+   * `zos_forward(..., 1, ...)`.
+   *
+   * @throws ADOLCError::ADOLCError if the tape is currently being written or
+   * if the number of supplied values does not match the tape.
    */
-  /* the taylor stack, so next reverse call will fail, if not preceded by a
-   */
-  /* forward call after setting the parameters. */
-  /****************************************************************************/
-  void set_param_vec(short tag, size_t numparam, const double *paramvec);
+  void setParamVec(std::span<const double> paramvec);
   void save_params();
   /****************************************************************************/
   /* Frees parameter indices after taping is complete */

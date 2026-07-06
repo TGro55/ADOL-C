@@ -3012,20 +3012,27 @@ in the preceding sections, the saved parameter values will be used,
 unless the user asks to replace them with a different vector of
 values.
 
-To replace the whole parameter vector one uses the routine
+To replace the whole parameter vector one uses the member function on
+the corresponding tape, for example
 \begin{tabbing}
-\hspace{0.5in}\={\sf short int tag;} \hspace{1.1in}\= \kill    % define tab position
-\>{\sf set\_param\_vec(tag, number, parameters)}\\
-\>{\sf short int tag;}   \> // tape identification\\
+\hspace{0.5in}\={\sf std::span$<$const double$>$ parameters;} \hspace{1.1in}\= \kill    % define tab position
+\>{\sf currentTape().setParamVec(parameters)}\\
+\>{\sf std::span$<$const double$>$ parameters;} \> // new parameter values\\
+\end{tabbing}
+A raw array or pointer can be passed by constructing a span explicitly:
+\begin{tabbing}
+\hspace{0.5in}\={\sf currentTape().setParamVec(std::span$<$const double$>$(parameters, number));} \hspace{1.1in}\= \kill    % define tab position
+\>{\sf currentTape().setParamVec(std::span$<$const double$>$(parameters, number));}\\
 \>{\sf size\_t number;}  \> // total number of constants marked as
 parameters\\
-\>{\sf double* parameters;} \> // array of constants to be used as replacement\\
+\>{\sf const double* parameters;} \> // array of constants to be used as replacement\\
 \end{tabbing}
 All following derivative computations using the drivers described in
 the preceding sections will now use the new parameters. 
 
 After replacing the parameters, however, one cannot directly call a basic
-reverse mode driver. A basic forward mode driver must be called. However,
+reverse mode driver. A forward sweep with {\sf keep >= 1} must be called
+first so that the Taylor coefficients match the updated parameters. However,
 the easy to use drivers from Section \ref{drivers} do this automatically.
 %
 \subsection{Differentiating external functions}

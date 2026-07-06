@@ -440,11 +440,12 @@ adouble f(const pdouble& p, const adouble& x){
 }
 
 int main() {
+const auto tapeId = createNewTape();
 adouble indep;
 pdouble p = 3.0;
 double out[1];
 
-trace_on(1);
+trace_on(tapeId);
 indep <<= 2.0;
 adouble out = f(p, x);
 dep >> out[0];
@@ -455,14 +456,17 @@ double grad[1]
 gradient(1, 1, 2.0, grad);
 std::cout << grad[0] << std::endl;
 
-// change that is stored at `p`s location on tape 1 to 1.0
-// one have to hand in the number of tracked `pdoubles` on the tape
-set_param_vec(1, 1, 1.0);
+// change what is stored at `p`s location on tape 1 to 1.0
+double params[1] = {1.0};
+currentTape().setParamVec(params);
 
 // compute d/dx p*x
 gradient(1, 1, 2.0, grad);
 std::cout << grad[0] << std::endl;
 }
+
+Changing parameters invalidates saved Taylor coefficients. Any reverse sweep
+after `setParamVec` must be preceded by a forward sweep with `keep >= 1`.
  */
 class ADOLC_API pdouble {
   /** @brief Stores the location of the `pdouble` on the tape. */
@@ -472,11 +476,12 @@ public:
   /** @brief Default destructor. */
   ~pdouble() = default;
 
-  /** @brief Deleted copy constructor. */
-  pdouble(const pdouble &) = delete;
-
   /** @brief Deleted default constructor. */
   pdouble() = delete;
+
+  /** @brief Deleted copy constructor and assignment. */
+  pdouble(const pdouble &) = delete;
+  pdouble &operator=(const pdouble &) = delete;
 
   /**
    * @brief Move constructor.
@@ -495,7 +500,7 @@ public:
    * @param other The `pdouble` to transfer.
    * @return Reference to `*this`
    */
-  pdouble &operator=(pdouble &&other) {
+  pdouble &operator=(pdouble &&other) noexcept {
     if (this == &other)
       return *this;
 

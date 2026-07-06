@@ -4,15 +4,56 @@ File for explicit testing the pdouble type file.
 */
 
 #define BOOST_TEST_DYN_LINK
+#include "const.h"
+#include <adolc/adolc.h>
+#include <array>
 #include <boost/test/unit_test.hpp>
 #include <limits> // for inf and nan
 namespace tt = boost::test_tools;
 
-#include <adolc/adolc.h>
-
-#include "const.h"
-
 BOOST_AUTO_TEST_SUITE(test_pdouble)
+
+BOOST_AUTO_TEST_CASE(CheckInvalidTaylorsAfterSetParamVec) {
+  const auto tapeId = createNewTape();
+  setCurrentTape(tapeId);
+
+  constexpr size_t dim_out = 1;
+  constexpr size_t dim_in = 1;
+
+  std::vector<double> ad_in{0.5};
+  std::vector<double> pd_in{0.5};
+
+  std::array<adouble, dim_in> indep;
+  std::array<double, dim_out> out{};
+
+  trace_on(tapeId, 1);
+  indep <<= ad_in;
+
+  pdouble pd(pd_in[0]);
+
+  adouble dep = indep[0] * exp(pd);
+
+  dep >>= out[0];
+  trace_off();
+
+  BOOST_TEST(out[0] == ad_in[0] * std::exp(pd_in[0]), tt::tolerance(tol));
+
+  std::array<double, 1> grad{};
+  std::array<double, 1> weight{1.0};
+  fos_reverse(tapeId, 1, 1, weight.data(), grad.data());
+
+  BOOST_TEST(grad[0] == std::exp(pd_in[0]), tt::tolerance(tol));
+
+  std::vector<double> params{1.2};
+  currentTape().setParamVec(params);
+
+  BOOST_CHECK_THROW(fos_reverse(tapeId, 1, 1, weight.data(), grad.data()),
+                    ADOLCError::ADOLCError);
+
+  zos_forward(tapeId, 1, 1, 1, ad_in.data(), out.data());
+  fos_reverse(tapeId, 1, 1, weight.data(), grad.data());
+  BOOST_TEST(grad[0] == std::exp(1.2), tt::tolerance(tol));
+}
 
 BOOST_AUTO_TEST_CASE(ExpOperator_ZOS_Forward) {
 
@@ -43,7 +84,7 @@ BOOST_AUTO_TEST_CASE(ExpOperator_ZOS_Forward) {
   pd_in[0] = 1.2;
 
   // update pd on tape
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::exp(pd_in[0]), tt::tolerance(tol));
@@ -82,7 +123,7 @@ BOOST_AUTO_TEST_CASE(ExpOperator_FOS_Forward) {
   pd_in[0] = 1.2;
 
   // update pd on tape
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -125,9 +166,8 @@ BOOST_AUTO_TEST_CASE(ExpOperator_FOS_Reverse) {
   BOOST_TEST(z[0] == aDerivative, tt::tolerance(tol));
 
   // Update pdouble parameter and recompute
-  pd_in[0] = 1.2; // New parameter value
-  currentTape().set_param_vec(tapeId, 1,
-                              pd_in.data()); // Update parameter on tape
+  pd_in[0] = 1.2;                   // New parameter value
+  currentTape().setParamVec(pd_in); // Update parameter on tape
 
   // recompute taylors
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
@@ -169,7 +209,7 @@ BOOST_AUTO_TEST_CASE(MultOperator_ZOS_Forward) {
 
   // Update parameter and test again
   pd_in[0] = 4.0;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, X.data(), Y.data());
   BOOST_TEST(Y[0] == ad_in[0] * pd_in[0], tt::tolerance(tol));
@@ -207,7 +247,7 @@ BOOST_AUTO_TEST_CASE(MultOperator_FOS_Forward) {
 
   // Update parameter and test again
   pd_in[0] = 4.0;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_in, dim_in, 0, X.data(), Xd.data(), Y.data(),
               Yd.data());
@@ -246,7 +286,7 @@ BOOST_AUTO_TEST_CASE(MultOperator_FOS_Reverse) {
 
   // Update pdouble parameter
   pd_in[0] = 4.2;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   // Recompute Taylor coefficients
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
@@ -286,7 +326,7 @@ BOOST_AUTO_TEST_CASE(AddOperator_ZOS_Forward) {
   pd_in[0] = 1.2;
 
   // update pd on tape
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] + pd_in[0], tt::tolerance(tol));
@@ -325,7 +365,7 @@ BOOST_AUTO_TEST_CASE(AddOperator_FOS_Forward) {
   pd_in[0] = 1.2;
 
   // update pd on tape
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -368,7 +408,7 @@ BOOST_AUTO_TEST_CASE(AddOperator_FOS_Reverse) {
 
   // Update pdouble parameter and recompute
   pd_in[0] = 1.2;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   // recompute taylors
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
@@ -408,7 +448,7 @@ BOOST_AUTO_TEST_CASE(SubOperator_ZOS_Forward) {
   pd_in[0] = 1.2;
 
   // update pd on tape
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] - pd_in[0], tt::tolerance(tol));
@@ -447,7 +487,7 @@ BOOST_AUTO_TEST_CASE(SubOperator_FOS_Forward) {
   pd_in[0] = 1.2;
 
   // update pd on tape
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -490,7 +530,7 @@ BOOST_AUTO_TEST_CASE(SubOperator_FOS_Reverse) {
 
   // Update pdouble parameter and recompute
   pd_in[0] = 1.2;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   // recompute taylors
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
@@ -530,7 +570,7 @@ BOOST_AUTO_TEST_CASE(DivOperator_ZOS_Forward) {
   pd_in[0] = 2.5;
 
   // update pd on tape
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] / pd_in[0], tt::tolerance(tol));
@@ -569,7 +609,7 @@ BOOST_AUTO_TEST_CASE(DivOperator_FOS_Forward) {
   pd_in[0] = 2.5;
 
   // update pd on tape
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -612,7 +652,7 @@ BOOST_AUTO_TEST_CASE(DivOperator_FOS_Reverse) {
 
   // Update pdouble parameter and recompute
   pd_in[0] = 2.5;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   // recompute taylors
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
@@ -650,7 +690,7 @@ BOOST_AUTO_TEST_CASE(TanOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::tan(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 1.5; // Update pdouble parameter
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::tan(pd_in[0]), tt::tolerance(tol));
@@ -690,7 +730,7 @@ BOOST_AUTO_TEST_CASE(TanOperator_FOS_Forward) {
   BOOST_TEST(Y[0] == expected_derivative, tt::tolerance(tol));
 
   pd_in[0] = 1.5;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -732,7 +772,7 @@ BOOST_AUTO_TEST_CASE(TanOperator_FOS_Reverse) {
   BOOST_TEST(z[0] == expected_derivative, tt::tolerance(tol));
 
   pd_in[0] = 1.5;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::tan(pd_in[0]), tt::tolerance(tol));
@@ -767,7 +807,7 @@ BOOST_AUTO_TEST_CASE(SinOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::sin(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 1.1; // Update pdouble parameter
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::sin(pd_in[0]), tt::tolerance(tol));
@@ -807,7 +847,7 @@ BOOST_AUTO_TEST_CASE(SinOperator_FOS_Forward) {
   BOOST_TEST(Y[0] == expected_derivative, tt::tolerance(tol));
 
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -849,7 +889,7 @@ BOOST_AUTO_TEST_CASE(SinOperator_FOS_Reverse) {
   BOOST_TEST(z[0] == expected_derivative, tt::tolerance(tol));
 
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::sin(pd_in[0]), tt::tolerance(tol));
@@ -885,7 +925,7 @@ BOOST_AUTO_TEST_CASE(CosOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::cos(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 1.1; // Update pdouble parameter
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::cos(pd_in[0]), tt::tolerance(tol));
@@ -925,7 +965,7 @@ BOOST_AUTO_TEST_CASE(CosOperator_FOS_Forward) {
   BOOST_TEST(Y[0] == expected_derivative, tt::tolerance(tol));
 
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -967,7 +1007,7 @@ BOOST_AUTO_TEST_CASE(CosOperator_FOS_Reverse) {
   BOOST_TEST(z[0] == expected_derivative, tt::tolerance(tol));
 
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::cos(pd_in[0]), tt::tolerance(tol));
@@ -1002,7 +1042,7 @@ BOOST_AUTO_TEST_CASE(SqrtOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::sqrt(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 1.1; // Update pdouble parameter
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::sqrt(pd_in[0]), tt::tolerance(tol));
@@ -1042,7 +1082,7 @@ BOOST_AUTO_TEST_CASE(SqrtOperator_FOS_Forward) {
   BOOST_TEST(Y[0] == expected_derivative, tt::tolerance(tol));
 
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -1084,7 +1124,7 @@ BOOST_AUTO_TEST_CASE(SqrtOperator_FOS_Reverse) {
   BOOST_TEST(z[0] == expected_derivative, tt::tolerance(tol));
 
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::sqrt(pd_in[0]), tt::tolerance(tol));
@@ -1120,7 +1160,7 @@ BOOST_AUTO_TEST_CASE(CbrtOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::cbrt(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 1.1; // Update pdouble parameter
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::cbrt(pd_in[0]), tt::tolerance(tol));
@@ -1160,7 +1200,7 @@ BOOST_AUTO_TEST_CASE(CbrtOperator_FOS_Forward) {
   BOOST_TEST(Y[0] == expected_derivative, tt::tolerance(tol));
 
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -1202,7 +1242,7 @@ BOOST_AUTO_TEST_CASE(CbrtOperator_FOS_Reverse) {
   BOOST_TEST(z[0] == expected_derivative, tt::tolerance(tol));
 
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::cbrt(pd_in[0]), tt::tolerance(tol));
@@ -1237,7 +1277,7 @@ BOOST_AUTO_TEST_CASE(LogOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::log(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 1.1; // Update pdouble parameter
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::log(pd_in[0]), tt::tolerance(tol));
@@ -1277,7 +1317,7 @@ BOOST_AUTO_TEST_CASE(LogOperator_FOS_Forward) {
   BOOST_TEST(Y[0] == expected_derivative, tt::tolerance(tol));
 
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -1319,7 +1359,7 @@ BOOST_AUTO_TEST_CASE(LogOperator_FOS_Reverse) {
   BOOST_TEST(z[0] == expected_derivative, tt::tolerance(tol));
 
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::log(pd_in[0]), tt::tolerance(tol));
@@ -1355,7 +1395,7 @@ BOOST_AUTO_TEST_CASE(SinhOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::sinh(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::sinh(pd_in[0]), tt::tolerance(tol));
@@ -1395,7 +1435,7 @@ BOOST_AUTO_TEST_CASE(SinhOperator_FOS_Forward) {
 
   // Update pdouble parameter
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -1438,7 +1478,7 @@ BOOST_AUTO_TEST_CASE(SinhOperator_FOS_Reverse) {
 
   // Update pdouble parameter
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::sinh(pd_in[0]), tt::tolerance(tol));
@@ -1474,7 +1514,7 @@ BOOST_AUTO_TEST_CASE(CoshOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::cosh(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::cosh(pd_in[0]), tt::tolerance(tol));
@@ -1516,7 +1556,7 @@ BOOST_AUTO_TEST_CASE(CoshOperator_FOS_Forward) {
 
   // Update pdouble parameter
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -1559,7 +1599,7 @@ BOOST_AUTO_TEST_CASE(CoshOperator_FOS_Reverse) {
 
   // Update pdouble parameter
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::cosh(pd_in[0]), tt::tolerance(tol));
@@ -1595,7 +1635,7 @@ BOOST_AUTO_TEST_CASE(TanhOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::tanh(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::tanh(pd_in[0]), tt::tolerance(tol));
@@ -1636,7 +1676,7 @@ BOOST_AUTO_TEST_CASE(TanhOperator_FOS_Forward) {
 
   // Update pdouble parameter
   pd_in[0] = 1.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -1679,7 +1719,7 @@ BOOST_AUTO_TEST_CASE(TanhOperator_FOS_Reverse) {
 
   // Update pdouble parameter
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::tanh(pd_in[0]), tt::tolerance(tol));
@@ -1715,7 +1755,7 @@ BOOST_AUTO_TEST_CASE(ASinOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::asin(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::asin(pd_in[0]), tt::tolerance(tol));
@@ -1757,7 +1797,7 @@ BOOST_AUTO_TEST_CASE(AsinOperator_FOS_Forward) {
 
   // Update pdouble parameter
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -1800,7 +1840,7 @@ BOOST_AUTO_TEST_CASE(AsinOperator_FOS_Reverse) {
 
   // Update pdouble parameter
   pd_in[0] = 0.2;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::asin(pd_in[0]), tt::tolerance(tol));
@@ -1836,7 +1876,7 @@ BOOST_AUTO_TEST_CASE(acosOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::acos(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::acos(pd_in[0]), tt::tolerance(tol));
@@ -1878,7 +1918,7 @@ BOOST_AUTO_TEST_CASE(acosOperator_FOS_Forward) {
 
   // Update pdouble parameter
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -1921,7 +1961,7 @@ BOOST_AUTO_TEST_CASE(acosOperator_FOS_Reverse) {
 
   // Update pdouble parameter
   pd_in[0] = 0.2;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::acos(pd_in[0]), tt::tolerance(tol));
@@ -1957,7 +1997,7 @@ BOOST_AUTO_TEST_CASE(atanOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::atan(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::atan(pd_in[0]), tt::tolerance(tol));
@@ -1999,7 +2039,7 @@ BOOST_AUTO_TEST_CASE(atanOperator_FOS_Forward) {
 
   // Update pdouble parameter
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -2042,7 +2082,7 @@ BOOST_AUTO_TEST_CASE(atanOperator_FOS_Reverse) {
 
   // Update pdouble parameter
   pd_in[0] = 0.2;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::atan(pd_in[0]), tt::tolerance(tol));
@@ -2078,7 +2118,7 @@ BOOST_AUTO_TEST_CASE(erfOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::erf(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::erf(pd_in[0]), tt::tolerance(tol));
@@ -2120,7 +2160,7 @@ BOOST_AUTO_TEST_CASE(erfOperator_FOS_Forward) {
 
   // Update pdouble parameter
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -2163,7 +2203,7 @@ BOOST_AUTO_TEST_CASE(erfOperator_FOS_Reverse) {
 
   // Update pdouble parameter
   pd_in[0] = 0.2;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::erf(pd_in[0]), tt::tolerance(tol));
@@ -2199,7 +2239,7 @@ BOOST_AUTO_TEST_CASE(erfcOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::erfc(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::erfc(pd_in[0]), tt::tolerance(tol));
@@ -2241,7 +2281,7 @@ BOOST_AUTO_TEST_CASE(erfcOperator_FOS_Forward) {
 
   // Update pdouble parameter
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -2284,7 +2324,7 @@ BOOST_AUTO_TEST_CASE(erfcOperator_FOS_Reverse) {
 
   // Update pdouble parameter
   pd_in[0] = 0.2;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::erfc(pd_in[0]), tt::tolerance(tol));
@@ -2320,7 +2360,7 @@ BOOST_AUTO_TEST_CASE(log10Operator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::log10(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::log10(pd_in[0]), tt::tolerance(tol));
@@ -2362,7 +2402,7 @@ BOOST_AUTO_TEST_CASE(log10Operator_FOS_Forward) {
 
   // Update pdouble parameter
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -2405,7 +2445,7 @@ BOOST_AUTO_TEST_CASE(log10Operator_FOS_Reverse) {
 
   // Update pdouble parameter
   pd_in[0] = 0.2;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::log10(pd_in[0]), tt::tolerance(tol));
@@ -2441,7 +2481,7 @@ BOOST_AUTO_TEST_CASE(fabsOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::fabs(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::fabs(pd_in[0]), tt::tolerance(tol));
@@ -2483,7 +2523,7 @@ BOOST_AUTO_TEST_CASE(fabsOperator_FOS_Forward) {
 
   // Update pdouble parameter
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -2526,7 +2566,7 @@ BOOST_AUTO_TEST_CASE(fabsOperator_FOS_Reverse) {
 
   // Update pdouble parameter
   pd_in[0] = 0.2;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::fabs(pd_in[0]), tt::tolerance(tol));
@@ -2562,7 +2602,7 @@ BOOST_AUTO_TEST_CASE(AbsOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::abs(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::abs(pd_in[0]), tt::tolerance(tol));
@@ -2604,7 +2644,7 @@ BOOST_AUTO_TEST_CASE(AbsOperator_FOS_Forward) {
 
   // Update pdouble parameter
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -2647,7 +2687,7 @@ BOOST_AUTO_TEST_CASE(AbsOperator_FOS_Reverse) {
 
   // Update pdouble parameter
   pd_in[0] = 0.2;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::abs(pd_in[0]), tt::tolerance(tol));
@@ -2683,7 +2723,7 @@ BOOST_AUTO_TEST_CASE(ceilOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::ceil(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::ceil(pd_in[0]), tt::tolerance(tol));
@@ -2725,7 +2765,7 @@ BOOST_AUTO_TEST_CASE(ceilOperator_FOS_Forward) {
 
   // Update pdouble parameter
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -2768,7 +2808,7 @@ BOOST_AUTO_TEST_CASE(ceilOperator_FOS_Reverse) {
 
   // Update pdouble parameter
   pd_in[0] = 0.2;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::ceil(pd_in[0]), tt::tolerance(tol));
@@ -2804,7 +2844,7 @@ BOOST_AUTO_TEST_CASE(floorOperator_ZOS_Forward) {
   BOOST_TEST(out[0] == ad_in[0] * std::floor(pd_in[0]), tt::tolerance(tol));
 
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::floor(pd_in[0]), tt::tolerance(tol));
@@ -2846,7 +2886,7 @@ BOOST_AUTO_TEST_CASE(floorOperator_FOS_Forward) {
 
   // Update pdouble parameter
   pd_in[0] = 0.3;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -2889,7 +2929,7 @@ BOOST_AUTO_TEST_CASE(floorOperator_FOS_Reverse) {
 
   // Update pdouble parameter
   pd_in[0] = 0.2;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0] * std::floor(pd_in[0]), tt::tolerance(tol));
@@ -2931,7 +2971,7 @@ BOOST_AUTO_TEST_CASE(FmaxOperator_ZOS_Forward_1) {
   // Update parameters
   pd_in[0] = 3.7;
   pd_in[1] = 3.5;
-  currentTape().set_param_vec(tapeId, 2, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, x.data(), y.data());
 
@@ -2979,7 +3019,7 @@ BOOST_AUTO_TEST_CASE(FmaxOperator_FOS_Forward_1) {
   // Test derivative with updated parameter values
   pd_in[0] = 3.7;
   pd_in[1] = 3.5;
-  currentTape().set_param_vec(tapeId, 2, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, X.data(), Xd.data(), Y.data(),
               Yd.data());
@@ -2998,7 +3038,7 @@ BOOST_AUTO_TEST_CASE(FmaxOperator_FOS_Forward_1) {
 
   pd_in[0] = 2.5;
   pd_in[1] = 2.5;
-  currentTape().set_param_vec(tapeId, 2, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, X1.data(), Xd1.data(), Y1.data(),
               Yd1.data());
@@ -3044,7 +3084,7 @@ BOOST_AUTO_TEST_CASE(FmaxOperator_FOS_Reverse_1) {
   // Update parameter values and recompute derivatives
   pd_in[0] = 2.5;
   pd_in[1] = 2.5;
-  currentTape().set_param_vec(tapeId, 2, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
 
@@ -3085,7 +3125,7 @@ BOOST_AUTO_TEST_CASE(FmaxOperator_ZOS_Forward_2) {
 
   // Update parameter values and recompute derivatives
   pd_in[0] = 2.5;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
   expected = std::fmax(pd_in[0], ad_in[0]);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), y.data());
@@ -3129,7 +3169,7 @@ BOOST_AUTO_TEST_CASE(FmaxOperator_FOS_Forward_2) {
   // Test case where a < b
   pd_in[0] = 2.0;
   ad_in[0] = 2.5;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   expected = std::fmax(pd_in[0], ad_in[0]);
   expected_derivative = (pd_in[0] > ad_in[0]) ? 0.0 : 1.0;
@@ -3179,7 +3219,7 @@ BOOST_AUTO_TEST_CASE(FmaxOperator_FOS_Reverse_2) {
   // Update parameters for case where a == b
   pd_in[0] = 0.5;
   ad_in[0] = 2.5;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
   expected_derivative = (pd_in[0] > ad_in[0]) ? 0.0 : 1.0;
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
 
@@ -3219,7 +3259,7 @@ BOOST_AUTO_TEST_CASE(FmaxOperator_ZOS_Forward_3) {
   BOOST_TEST(y[0] == expected, tt::tolerance(tol));
 
   pd_in[0] = 4.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), y.data());
 
   BOOST_TEST(y[0] == pd_in[0], tt::tolerance(tol));
@@ -3260,7 +3300,7 @@ BOOST_AUTO_TEST_CASE(FmaxOperator_FOS_Forward_3) {
 
   // Test case where a == b
   pd_in[0] = 4.5;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), xd.data(), out.data(),
               yd.data());
@@ -3304,7 +3344,7 @@ BOOST_AUTO_TEST_CASE(FmaxOperator_FOS_Reverse_3) {
 
   // Update parameters for case where a < b
   pd_in[0] = 4.5;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   fos_reverse(tapeId, dim_out, dim_in, u.data(), z.data());
@@ -3346,7 +3386,7 @@ BOOST_AUTO_TEST_CASE(MaxOperator_ZOS_Forward_1) {
   // Update parameters
   pd_in[0] = 3.7;
   pd_in[1] = 3.5;
-  currentTape().set_param_vec(tapeId, 2, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 0, x.data(), y.data());
 
@@ -3394,7 +3434,7 @@ BOOST_AUTO_TEST_CASE(MaxOperator_FOS_Forward_1) {
   // Test derivative with updated parameter values
   pd_in[0] = 3.7;
   pd_in[1] = 3.5;
-  currentTape().set_param_vec(tapeId, 2, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, X.data(), Xd.data(), Y.data(),
               Yd.data());
@@ -3413,7 +3453,7 @@ BOOST_AUTO_TEST_CASE(MaxOperator_FOS_Forward_1) {
 
   pd_in[0] = 2.5;
   pd_in[1] = 2.5;
-  currentTape().set_param_vec(tapeId, 2, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, X1.data(), Xd1.data(), Y1.data(),
               Yd1.data());
@@ -3458,7 +3498,7 @@ BOOST_AUTO_TEST_CASE(MaxOperator_FOS_Reverse_1) {
   // Update parameter values and recompute derivatives
   pd_in[0] = 2.5;
   pd_in[1] = 2.5;
-  currentTape().set_param_vec(tapeId, 2, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
 
@@ -3499,7 +3539,7 @@ BOOST_AUTO_TEST_CASE(MaxOperator_ZOS_Forward_2) {
 
   // Update parameter values and recompute derivatives
   pd_in[0] = 2.5;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
   expected = std::max(pd_in[0], ad_in[0]);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), y.data());
@@ -3543,7 +3583,7 @@ BOOST_AUTO_TEST_CASE(MaxOperator_FOS_Forward_2) {
   // Test case where a < b
   pd_in[0] = 2.0;
   ad_in[0] = 2.5;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   expected = std::max(pd_in[0], ad_in[0]);
   expected_derivative = (pd_in[0] > ad_in[0]) ? 0.0 : 1.0;
@@ -3593,7 +3633,7 @@ BOOST_AUTO_TEST_CASE(MaxOperator_FOS_Reverse_2) {
   // Update parameters for case where a == b
   pd_in[0] = 0.5;
   ad_in[0] = 2.5;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
   expected_derivative = (pd_in[0] > ad_in[0]) ? 0.0 : 1.0;
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
 
@@ -3633,7 +3673,7 @@ BOOST_AUTO_TEST_CASE(MaxOperator_ZOS_Forward_3) {
   BOOST_TEST(y[0] == expected, tt::tolerance(tol));
 
   pd_in[0] = 4.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), y.data());
 
   BOOST_TEST(y[0] == pd_in[0], tt::tolerance(tol));
@@ -3674,7 +3714,7 @@ BOOST_AUTO_TEST_CASE(MaxOperator_FOS_Forward_3) {
 
   // Test case where a == b
   pd_in[0] = 4.5;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), xd.data(), out.data(),
               yd.data());
@@ -3718,7 +3758,7 @@ BOOST_AUTO_TEST_CASE(MaxOperator_FOS_Reverse_3) {
 
   // Update parameters for case where a < b
   pd_in[0] = 4.5;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   fos_reverse(tapeId, dim_out, dim_in, u.data(), z.data());
@@ -3756,7 +3796,7 @@ BOOST_AUTO_TEST_CASE(FminOperator_ZOS_Forward_1) {
 
   // Update parameter value and a < p
   pd_in[0] = 4.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), y.data());
   expected = std::fmin(ad_in[0], pd_in[0]);
@@ -3796,7 +3836,7 @@ BOOST_AUTO_TEST_CASE(FminOperator_FOS_Forward_1) {
 
   // a < p
   pd_in[0] = 6.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -3837,7 +3877,7 @@ BOOST_AUTO_TEST_CASE(FminOperator_FOS_Reverse_1) {
 
   // a < p
   pd_in[0] = 7.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == std::fmin(ad_in[0], pd_in[0]), tt::tolerance(tol));
@@ -3875,7 +3915,7 @@ BOOST_AUTO_TEST_CASE(FminOperator_ZOS_Forward_2) {
 
   // a < p
   pd_in[0] = 7.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), y.data());
   expected = std::fmin(ad_in[0], pd_in[0]);
@@ -3914,7 +3954,7 @@ BOOST_AUTO_TEST_CASE(FminOperator_FOS_Forward_2) {
 
   // a < p
   pd_in[0] = 7.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -3953,7 +3993,7 @@ BOOST_AUTO_TEST_CASE(FminOperator_FOS_Reverse_2) {
 
   // a < p
   pd_in[0] = 7.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0], tt::tolerance(tol));
@@ -4048,7 +4088,7 @@ BOOST_AUTO_TEST_CASE(MinOperator_ZOS_Forward_1) {
 
   // Update parameter value and a < p
   pd_in[0] = 4.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), y.data());
   expected = std::min(ad_in[0], pd_in[0]);
@@ -4088,7 +4128,7 @@ BOOST_AUTO_TEST_CASE(MinOperator_FOS_Forward_1) {
 
   // a < p
   pd_in[0] = 6.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -4129,7 +4169,7 @@ BOOST_AUTO_TEST_CASE(MinOperator_FOS_Reverse_1) {
 
   // a < p
   pd_in[0] = 7.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == std::min(ad_in[0], pd_in[0]), tt::tolerance(tol));
@@ -4167,7 +4207,7 @@ BOOST_AUTO_TEST_CASE(MinOperator_ZOS_Forward_2) {
 
   // a < p
   pd_in[0] = 7.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), y.data());
   expected = std::min(ad_in[0], pd_in[0]);
@@ -4206,7 +4246,7 @@ BOOST_AUTO_TEST_CASE(MinOperator_FOS_Forward_2) {
 
   // a < p
   pd_in[0] = 7.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   fos_forward(tapeId, dim_out, dim_in, 0, ad_in.data(), X.data(), out.data(),
               Y.data());
@@ -4245,7 +4285,7 @@ BOOST_AUTO_TEST_CASE(MinOperator_FOS_Reverse_2) {
 
   // a < p
   pd_in[0] = 7.1;
-  currentTape().set_param_vec(tapeId, 1, pd_in.data());
+  currentTape().setParamVec(pd_in);
 
   zos_forward(tapeId, dim_out, dim_in, 1, ad_in.data(), out.data());
   BOOST_TEST(out[0] == ad_in[0], tt::tolerance(tol));
