@@ -521,35 +521,42 @@ void ValueTape::read_params() {
 }
 
 /****************************************************************************/
-/* Overrides the parameters for the next evaluations. This will invalidate  */
-/* the taylor stack, so next reverse call will fail, if not preceded by a   */
-/* forward call after setting the parameters.                               */
+/* Updates the parameter values used by subsequent evaluations.              */
+/* Invalidates saved Taylor coefficients; reverse requires a forward sweep   */
+/* with keep = 1 after changing parameters.                                  */
 /****************************************************************************/
-void ValueTape::set_param_vec(short tag, size_t numparam,
-                              const double *paramvec) {
+void ValueTape::setParamVec(std::span<const double> paramvec) {
   using ADOLCError::fail;
   using ADOLCError::FailInfo;
   using ADOLCError::ErrorType::PARAM_COUNTS_MISMATCH;
+  using ADOLCError::ErrorType::TAPING_TAPE_STILL_IN_USE;
 
-  /* make room for tapeInfos and read tapestats if necessary, keep value
-   * stack information */
-  openTape();
-  workMode(TapeInfos::WRITE_ACCESS);
-  if (tapestats(TapeInfos::NUM_PARAM) != numparam)
+  const auto oldMode = workMode();
+  if (oldMode == TapeInfos::WRITE_ACCESS) {
+    fail(ADOLCError::ErrorType::TAPING_TAPE_STILL_IN_USE, CURRENT_LOCATION,
+         FailInfo{.info1 = tapeId()});
+  }
+
+  if (tapestats(TapeInfos::NUM_PARAM) != paramvec.size()) {
+    workMode(oldMode);
     fail(PARAM_COUNTS_MISMATCH, CURRENT_LOCATION,
-         FailInfo{.info1 = tag,
-                  .info5 = numparam,
+         FailInfo{.info1 = tapeId(),
+                  .info5 = paramvec.size(),
                   .info6 = tapeInfos_.stats[TapeInfos::NUM_PARAM]});
+  }
+
+  workMode(TapeInfos::WRITE_ACCESS);
 
   if (!paramstore())
     paramstore(new double[tapestats(TapeInfos::NUM_PARAM)]);
 
-  double *paramstore_view = paramstore();
-  for (size_t i = 0; i < tapestats(TapeInfos::NUM_PARAM); ++i)
+  auto paramstore_view =
+      std::span<double>(paramstore(), tapestats(TapeInfos::NUM_PARAM));
+  for (size_t i = 0; i < paramstore_view.size(); ++i)
     paramstore_view[i] = paramvec[i];
 
-  finish_tay_file();
-  workMode(TapeInfos::NO_MODE);
+  deg_save(-1);
+  workMode(oldMode);
 }
 
 /**

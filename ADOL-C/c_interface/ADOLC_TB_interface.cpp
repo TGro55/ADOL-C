@@ -3,6 +3,7 @@
 #include <adolc/adolc.h>
 #include <adolc/tape_interface.h>
 #include <cassert>
+#include <span>
 
 namespace {
 
@@ -376,7 +377,8 @@ tape_loc adolc_mkparam(const double val) {
 
 void adolc_set_param_vec(const short tape_id, const unsigned int numparam,
                          const double *paramvec) {
-  findTape(tape_id).set_param_vec(tape_id, numparam, paramvec);
+  findTape(tape_id).setParamVec(
+      std::span<const double>(paramvec, static_cast<size_t>(numparam)));
 }
 
 } // extern "C"
