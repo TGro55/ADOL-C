@@ -3,7 +3,6 @@
 
 #include <adolc/valuetape/infotype.h>
 #include <adolc/valuetape/tapeinfos.h>
-#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -13,33 +12,14 @@ namespace ADOLC::detail {
 
 struct TapeRecordingContext {
   using StatEntries = TapeInfos::StatEntries;
-  static constexpr size_t STAT_SIZE = TapeInfos::STAT_SIZE;
-
-  static constexpr StatEntries NUM_INDEPENDENTS = TapeInfos::NUM_INDEPENDENTS;
-  static constexpr StatEntries NUM_DEPENDENTS = TapeInfos::NUM_DEPENDENTS;
-  static constexpr StatEntries NUM_MAX_LIVES = TapeInfos::NUM_MAX_LIVES;
-  static constexpr StatEntries NUM_TAYS = TapeInfos::NUM_TAYS;
-  static constexpr StatEntries OP_BUFFER_SIZE = TapeInfos::OP_BUFFER_SIZE;
-  static constexpr StatEntries NUM_OPERATIONS = TapeInfos::NUM_OPERATIONS;
-  static constexpr StatEntries OP_FILE_ACCESS = TapeInfos::OP_FILE_ACCESS;
-  static constexpr StatEntries NUM_LOCATIONS = TapeInfos::NUM_LOCATIONS;
-  static constexpr StatEntries LOC_FILE_ACCESS = TapeInfos::LOC_FILE_ACCESS;
-  static constexpr StatEntries NUM_VALUES = TapeInfos::NUM_VALUES;
-  static constexpr StatEntries VAL_FILE_ACCESS = TapeInfos::VAL_FILE_ACCESS;
-  static constexpr StatEntries LOC_BUFFER_SIZE = TapeInfos::LOC_BUFFER_SIZE;
-  static constexpr StatEntries VAL_BUFFER_SIZE = TapeInfos::VAL_BUFFER_SIZE;
-  static constexpr StatEntries TAY_BUFFER_SIZE = TapeInfos::TAY_BUFFER_SIZE;
-  static constexpr StatEntries NUM_EQ_PROD = TapeInfos::NUM_EQ_PROD;
-  static constexpr StatEntries NO_MIN_MAX = TapeInfos::NO_MIN_MAX;
-  static constexpr StatEntries NUM_SWITCHES = TapeInfos::NUM_SWITCHES;
-  static constexpr StatEntries NUM_PARAM = TapeInfos::NUM_PARAM;
-  static constexpr size_t maxLocsPerOp = TapeInfos::maxLocsPerOp;
-
-  TapeRecordingContext() = default;
   ~TapeRecordingContext() {
     delete[] signature;
     signature = nullptr;
+    delete[] paramstore;
+    paramstore = nullptr;
   }
+
+  TapeRecordingContext() = default;
 
   TapeRecordingContext(const TapeRecordingContext &) = delete;
   TapeRecordingContext &operator=(const TapeRecordingContext &) = delete;
@@ -54,10 +34,10 @@ struct TapeRecordingContext {
         tay_numInds(other.tay_numInds), tay_numDeps(other.tay_numDeps),
         numSwitches(other.numSwitches),
         nestedReverseEval(other.nestedReverseEval),
-        ext_diff_fct_index(other.ext_diff_fct_index),
         nextBufferNumber(other.nextBufferNumber),
         lastTayBlockInCore(other.lastTayBlockInCore),
-        signature(std::exchange(other.signature, nullptr)) {}
+        signature(std::exchange(other.signature, nullptr)),
+        paramstore(std::exchange(other.paramstore, nullptr)) {}
 
   TapeRecordingContext &operator=(TapeRecordingContext &&other) noexcept {
     if (this != &other) {
@@ -75,12 +55,13 @@ struct TapeRecordingContext {
       tay_numDeps = other.tay_numDeps;
       numSwitches = other.numSwitches;
       nestedReverseEval = other.nestedReverseEval;
-      ext_diff_fct_index = other.ext_diff_fct_index;
       nextBufferNumber = other.nextBufferNumber;
       lastTayBlockInCore = other.lastTayBlockInCore;
 
       delete[] signature;
       signature = std::exchange(other.signature, nullptr);
+      delete[] paramstore;
+      paramstore = std::exchange(other.paramstore, nullptr);
     }
     return *this;
   }
@@ -113,88 +94,17 @@ struct TapeRecordingContext {
    */
   bool nestedReverseEval{false};
 
-  /* extern diff. fcts */
-  size_t ext_diff_fct_index{0}; /* set by forward and reverse (from tape) */
-
-  // the next Buffer to read back
+  // the next Taylor buffer to read back
   size_t nextBufferNumber{0};
+
   // == 1 if last taylor buffer is still in
   // in core(first call of reverse)
   char lastTayBlockInCore{0};
-
   double *signature{nullptr};
-
-  /**
-   * @brief Load the next forward element for the tape selected by `Info`.
-   */
-  template <InfoType<TapeRecordingContext, ErrorType> Info>
-  typename Info::value_type loadNextForward() {
-    auto &buffer = Info::getBuffer(*this);
-    return buffer.readAndAdvance();
-  }
-
-  /**
-   * @brief Load the next reverse element for the tape selected by `Info`.
-   */
-  template <InfoType<TapeRecordingContext, ErrorType> Info>
-  typename Info::value_type loadNextReverse(size_t blockSize) {
-    auto &buffer = Info::getBuffer(*this);
-    Info::ensureReverseReadable(*this, blockSize);
-    return buffer.retreatAndRead();
-  }
-
-  // writes the block of size depth of taylor coefficients from point loc to
-  // the taylor buffer, if the buffer is filled, then it is written to the
-  // taylor tape
-  void write_taylor(double *taylorCoefficientPos, std::ptrdiff_t keep,
-                    const char *tay_fileName);
-
-  // writes a single element (x) to the taylor buffer and writes the buffer
-  // to disk if necessary
-  void write_scaylor(double val, const char *tay_fileName) {
-    using TayInfoT = ADOLC::detail::TayInfo<TapeRecordingContext, ErrorType>;
-    if (tayBuffer_.position() == tayBuffer_.capacity())
-      put_block<TayInfoT>(tay_fileName, tayBuffer_.capacity());
-    tayBuffer_.writeAndAdvance(val);
-  }
-
-  /****************************************************************************/
-  /* Writes the block of size depth of taylor coefficients from point loc to  */
-  /* the taylor buffer.  If the buffer is filled, then it is written to the   */
-  /* taylor tape.                                                             */
-  /*--------------------------------------------------------------------------*/
-  void write_taylors(double *taylorCoefficientPos, int keep, int degree,
-                     int numDir, const char *tay_fileName);
-
-  /****************************************************************************/
-  /* Write_scaylors writes # size elements from x to the taylor buffer.       */
-  /****************************************************************************/
-  void write_scaylors(const double *taylorCoefficientPos, std::ptrdiff_t size,
-                      const char *tay_fileName);
-
-  /*
-   * Puts a block of taylor coefficients from the value stack buffer to the
-   * buffer pointed ty by taylorCoefficients. The buffer is expected to be
-   * contiguous in memory. Use in Higher Order Scalar drivers.
-   */
-  void get_taylors(double *taylorCoefficients, std::ptrdiff_t degree,
-                   size_t taylorBufferSize);
-
-  /*
-   * Puts a block of taylor coefficients from the value stack buffer to buffer
-   * pointed to by taylorCoefficients. The buffer is expected to be contiguous
-   * in memory. Use in Higher Order Vector drivers.
-   */
-  void get_taylors_p(double *taylorCoefficients, int degree, int numDir,
-                     size_t taylorBufferSize);
+  double *paramstore{nullptr};
 
   // functions for handling loc tape
   void put_loc(size_t loc) { locBuffer_.writeAndAdvance(loc); }
-
-  // puts an operation into the operation buffer, ensures that location
-  // buffer and constants buffer are prepared to take the belonging stuff
-  void put_op(OPCODES op, const char *loc_fileName, const char *op_fileName,
-              const char *val_fileName, size_t reserveExtraLocations = 0);
 
   /**
    * @brief Ensure that the tape file associated with Info exists and is ready
@@ -231,7 +141,6 @@ struct TapeRecordingContext {
     openFile<Info>(fileName);
     const size_t numChunks = lengthBlock / Info::chunkSize;
 
-    // write full chunks
     for (size_t chunk = 0; chunk < numChunks; chunk++) {
       auto returnCode = write<TapeRecordingContext, ErrorType, Info>(
           *this, chunk, Info::chunkSize);
@@ -239,7 +148,6 @@ struct TapeRecordingContext {
         fail(TAPING_FATAL_IO_ERROR, CURRENT_LOCATION);
     }
 
-    // write one final partial chunk
     const size_t remain = lengthBlock % Info::chunkSize;
     if (remain != 0) {
       auto returnCode = write<TapeRecordingContext, ErrorType, Info>(
@@ -261,97 +169,25 @@ struct TapeRecordingContext {
       valBuffer_.writeAndAdvance(vals[i]);
     }
   }
+  void put_op(OPCODES op, const char *loc_fileName, const char *op_fileName,
+              const char *val_fileName, size_t reserveExtraLocations = 0);
   void put_vals_writeBlock(double *vals, size_t numVals,
                            const char *op_fileName, const char *val_fileName);
+  size_t get_val_space(const char *op_fileName, const char *val_fileName);
 
-  /**
-   * @brief Loads one block of tape data into the buffer selected by `Info`.
-   */
-  template <InfoType<TapeRecordingContext, ErrorType> Info>
-  void loadBlockIntoBuffer(size_t blockSize) {
-    using ADOLCError::fail;
-    auto &buffer = Info::getBuffer(*this);
-
-    const size_t numChunks = blockSize / Info::chunkSize;
-    for (size_t chunk = 0; chunk < numChunks; chunk++) {
-      const auto ret =
-          fread(buffer.begin() + (chunk * Info::chunkSize),
-                Info::chunkSize * sizeof(typename Info::value_type), 1,
-                buffer.file());
-      if (ret != 1) {
-        fail(Info::error, CURRENT_LOCATION);
-      }
-    }
-    const size_t remain = blockSize % Info::chunkSize;
-    if (remain != 0) {
-      const auto ret =
-          fread(buffer.begin() + (numChunks * Info::chunkSize),
-                remain * sizeof(typename Info::value_type), 1, buffer.file());
-      if (ret != 1) {
-        fail(Info::error, CURRENT_LOCATION);
-      }
-    }
+  // writes a single element (x) to the taylor buffer and writes the buffer
+  // to disk if necessary
+  void write_scaylor(double val, const char *tay_fileName) {
+    using TayInfoT = ADOLC::detail::TayInfo<TapeRecordingContext, ErrorType>;
+    if (tayBuffer_.position() == tayBuffer_.capacity())
+      put_block<TayInfoT>(tay_fileName, tayBuffer_.capacity());
+    tayBuffer_.writeAndAdvance(val);
   }
 
-  /**
-   * @brief Load the next forward block for the tape selected by `Info`.
-   */
-  template <InfoType<TapeRecordingContext, ErrorType> Info>
-  void loadBlockIntoBufferForward(size_t bufferSize) {
-    auto &buffer = Info::getBuffer(*this);
-    const size_t blockSize = std::min(bufferSize, buffer.numOnTape());
-    loadBlockIntoBuffer<Info>(blockSize);
-    Info::updateBufferStatsForward(*this, blockSize);
-    Info::updateBufferPositionForward(*this);
-  }
-
-  /**
-   * @brief Load the next reverse block for the tape selected by `Info`.
-   */
-  template <InfoType<TapeRecordingContext, ErrorType> Info>
-  void loadBlockIntoBufferReverse(size_t blockSize) {
-    using ADOLCError::fail;
-
-    auto &buffer = Info::getBuffer(*this);
-    const long pos = Info::reverseSeekOffset(*this, blockSize);
-    const auto ret = fseek(buffer.file(), pos, SEEK_SET);
-    if (ret == -1) {
-      fail(Info::error, CURRENT_LOCATION);
-    }
-
-    loadBlockIntoBuffer<Info>(blockSize);
-    Info::updateBufferStatsReverse(*this, blockSize);
-    Info::updateBufferPositionReverse(*this, blockSize);
-  }
-
+  /* Write_scaylors writes # size elements from x to the taylor buffer.       */
   /****************************************************************************/
-  /* Returns a pointer to the first element of a values vector and skips the  */
-  /* vector. -- Forward Mode --                                               */
-  /****************************************************************************/
-  double *get_val_v_f(size_t size) {
-    double *temp = valBuffer_.current();
-    valBuffer_.position(valBuffer_.position() + size);
-    return temp;
-  }
-
-  /****************************************************************************/
-  /* Returns a pointer to the first element of a values vector and skips the  */
-  /* vector. -- Reverse Mode --                                               */
-  /****************************************************************************/
-  double *get_val_v_r(size_t size) {
-    valBuffer_.position(valBuffer_.position() - size);
-    return valBuffer_.current();
-  }
-
-  /****************************************************************************/
-  /* Not sure what's going on here! -> vector class ?  --- kowarz             */
-  /****************************************************************************/
-  void reset_val_r(size_t valueBufferSize) {
-    using ValInfoT = ADOLC::detail::ValInfo<TapeRecordingContext, ErrorType>;
-    if (valBuffer_.position() == 0) {
-      loadBlockIntoBufferReverse<ValInfoT>(valueBufferSize);
-    }
-  }
+  void write_scaylors(const double *taylorCoefficientPos, std::ptrdiff_t size,
+                      const char *tay_fileName);
 
   /****************************************************************************/
   /* Update locations tape to remove assignments involving temp. variables.   */
@@ -403,8 +239,6 @@ struct TapeRecordingContext {
     }
     return 0;
   }
-
-  size_t get_val_space(const char *op_fileName, const char *val_fileName);
 };
 
 } // namespace ADOLC::detail

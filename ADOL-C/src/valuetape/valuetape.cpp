@@ -3,13 +3,18 @@
 #include <adolc/internal/common.h>
 #include <adolc/tape_interface.h>
 #include <adolc/valuetape/infotype.h>
+#include <adolc/valuetape/tapeevaluationcontext.h>
 #include <adolc/valuetape/tapeinfos.h>
 #include <adolc/valuetape/taperecordingcontext.h>
 #include <adolc/valuetape/valuetape.h>
 #include <cassert>
+#include <cstddef>
+#include <memory>
 #include <string>
 #include <sys/stat.h> // used in readconfigFile
+#include <utility>
 
+using ADOLC::detail::TapeEvaluationContext;
 ValueTape::~ValueTape() {
   // ensure that we dont delete the valuetape before all adouble or pdouble are
   // deleted!
@@ -19,32 +24,32 @@ ValueTape::~ValueTape() {
 
 void ValueTape::initTapeInfos_keep() {
   // we want to keep the buffers
-  const size_t opBufferCapacity = recordingContext_.opBuffer_.capacity();
-  unsigned char *const opBuffer = recordingContext_.opBuffer_.releaseBuffer();
+  const size_t opBufferCapacity = recordCtx_.opBuffer_.capacity();
+  unsigned char *const opBuffer = recordCtx_.opBuffer_.releaseBuffer();
 
-  const size_t valBufferCapacity = recordingContext_.valBuffer_.capacity();
-  double *const valBuffer = recordingContext_.valBuffer_.releaseBuffer();
+  const size_t valBufferCapacity = recordCtx_.valBuffer_.capacity();
+  double *const valBuffer = recordCtx_.valBuffer_.releaseBuffer();
 
-  const size_t locBufferCapacity = recordingContext_.locBuffer_.capacity();
-  size_t *const locBuffer = recordingContext_.locBuffer_.releaseBuffer();
+  const size_t locBufferCapacity = recordCtx_.locBuffer_.capacity();
+  size_t *const locBuffer = recordCtx_.locBuffer_.releaseBuffer();
 
-  const size_t tayBufferCapacity = recordingContext_.tayBuffer_.capacity();
-  double *const tayBuffer = recordingContext_.tayBuffer_.releaseBuffer();
-  FILE *const tay_file = recordingContext_.tayBuffer_.releaseFile();
+  const size_t tayBufferCapacity = recordCtx_.tayBuffer_.capacity();
+  double *const tayBuffer = recordCtx_.tayBuffer_.releaseBuffer();
+  FILE *const tay_file = recordCtx_.tayBuffer_.releaseFile();
 
-  double *signature = recordingContext_.signature;
+  double *signature = recordCtx_.signature;
 
-  // make sure the destructor will not destroy them
-  recordingContext_.signature = nullptr;
+  // make sure the destructor will not destroy the preserved signature.
+  recordCtx_.signature = nullptr;
 
-  recordingContext_ = ADOLC::detail::TapeRecordingContext();
+  recordCtx_ = ADOLC::detail::TapeRecordingContext();
 
-  recordingContext_.opBuffer_.resetBuffer(opBuffer, opBufferCapacity);
-  recordingContext_.valBuffer_.resetBuffer(valBuffer, valBufferCapacity);
-  recordingContext_.locBuffer_.resetBuffer(locBuffer, locBufferCapacity);
-  recordingContext_.tayBuffer_.resetBuffer(tayBuffer, tayBufferCapacity);
-  recordingContext_.tayBuffer_.resetFile(tay_file);
-  recordingContext_.signature = signature;
+  recordCtx_.opBuffer_.resetBuffer(opBuffer, opBufferCapacity);
+  recordCtx_.valBuffer_.resetBuffer(valBuffer, valBufferCapacity);
+  recordCtx_.locBuffer_.resetBuffer(locBuffer, locBufferCapacity);
+  recordCtx_.tayBuffer_.resetBuffer(tayBuffer, tayBufferCapacity);
+  recordCtx_.tayBuffer_.resetFile(tay_file);
+  recordCtx_.signature = signature;
 }
 
 /* inits a new tape and updates the tape stack (called from start_trace)
@@ -59,8 +64,8 @@ int ValueTape::initNewTape() {
     fail(TAPING_TAPE_STILL_IN_USE, CURRENT_LOCATION,
          FailInfo{.info1 = tapeId()});
   }
-  if (recordingContext_.tayBuffer_.file() != nullptr)
-    rewind(recordingContext_.tayBuffer_.file());
+  if (recordCtx_.tayBuffer_.file() != nullptr)
+    rewind(recordCtx_.tayBuffer_.file());
 
   // creates new tapeInfos object with old buffers
   // thus, we dont allocate the buffers again if they are already existent
@@ -80,8 +85,6 @@ int ValueTape::initNewTape() {
   return 0;
 }
 
-/* opens an existing tape or creates a new handle for a tape on hard disk
- * - called from init_for_sweep and init_rev_sweep */
 void ValueTape::openTape() {
   using ADOLCError::fail;
   using ADOLCError::FailInfo;
@@ -94,9 +97,6 @@ void ValueTape::openTape() {
   } else if (keepTaylors() == 0 && tapestats(TapeInfos::OP_FILE_ACCESS) == 1 &&
              tapestats(TapeInfos::LOC_FILE_ACCESS) == 1 &&
              tapestats(TapeInfos::VAL_FILE_ACCESS) == 1) {
-    if (recordingContext_.tayBuffer_.file() != nullptr)
-      rewind(recordingContext_.tayBuffer_.file());
-    initTapeInfos_keep();
     read_tape_stats();
   }
   // must be after initTapeInfos_keep, to not get overwritten!
@@ -172,18 +172,17 @@ void ValueTape::taylor_begin(int degreeSave) {
   using ADOLCError::FailInfo;
   using ADOLCError::ErrorType::TAPING_TBUFFER_ALLOCATION_FAILED;
 
-  if (recordingContext_.tayBuffer_.begin()) {
+  if (recordCtx_.tayBuffer_.begin()) {
     finish_tay_file();
   } else {
-    recordingContext_.tayBuffer_.allocIfNull(
-        tapestats(TapeInfos::TAY_BUFFER_SIZE));
+    recordCtx_.tayBuffer_.allocIfNull(tapestats(TapeInfos::TAY_BUFFER_SIZE));
   }
 
   deg_save(degreeSave);
   if (degreeSave >= 0)
     keepTaylors(1);
-  recordingContext_.tayBuffer_.position(0);
-  recordingContext_.tayBuffer_.numOnTape(0);
+  recordCtx_.tayBuffer_.position(0);
+  recordCtx_.tayBuffer_.numOnTape(0);
 }
 
 /****************************************************************************/
@@ -192,89 +191,27 @@ void ValueTape::taylor_begin(int degreeSave) {
 void ValueTape::finish_tay_file() {
   /* enforces failure of reverse => retaping */
   deg_save(-1);
-  if (recordingContext_.tayBuffer_.file() != nullptr) {
-    recordingContext_.tayBuffer_.closeFile();
+  if (recordCtx_.tayBuffer_.file() != nullptr) {
+    recordCtx_.tayBuffer_.closeFile();
     remove(tay_fileName());
   }
   return;
 }
 
 void ValueTape::taylor_close() {
-  using TayInfo = ADOLC::detail::TayInfo<RecordingContext, ErrorType>;
-  if (recordingContext_.tayBuffer_.file() != nullptr) {
+  using TayInfo = ADOLC::detail::TayInfo<TapeRecordingContext, ErrorType>;
+  if (recordCtx_.tayBuffer_.file() != nullptr) {
     if (keepTaylors() != 0) {
-      recordingContext_.put_block<TayInfo>(
-          tay_fileName(), recordingContext_.tayBuffer_.position());
+      recordCtx_.put_block<TayInfo>(tay_fileName(),
+                                    recordCtx_.tayBuffer_.position());
     }
   } else {
-    recordingContext_.tayBuffer_.numOnTape(
-        recordingContext_.tayBuffer_.position());
+    recordCtx_.tayBuffer_.numOnTape(recordCtx_.tayBuffer_.position());
   }
   lastTayBlockInCore(1);
-  tapestats(TapeInfos::NUM_TAYS, recordingContext_.tayBuffer_.numOnTape());
+  tapestats(TapeInfos::NUM_TAYS, recordCtx_.tayBuffer_.numOnTape());
   tay_numInds(tapestats(TapeInfos::NUM_INDEPENDENTS));
   tay_numDeps(tapestats(TapeInfos::NUM_DEPENDENTS));
-}
-
-/****************************************************************************/
-/* Initializes a reverse sweep.                                             */
-/****************************************************************************/
-void ValueTape::taylor_back() {
-  if (recordingContext_.tayBuffer_.begin() == nullptr)
-    ADOLCError::fail(ADOLCError::ErrorType::REVERSE_NO_TAYLOR_STACK,
-                     CURRENT_LOCATION, ADOLCError::FailInfo{.info1 = tapeId()});
-
-  nextBufferNumber(recordingContext_.tayBuffer_.numOnTape() /
-                   tapestats(TapeInfos::TAY_BUFFER_SIZE));
-  const size_t number = recordingContext_.tayBuffer_.numOnTape() %
-                        tapestats(TapeInfos::TAY_BUFFER_SIZE);
-  recordingContext_.tayBuffer_.position(number);
-
-  if (lastTayBlockInCore() != 1) {
-    if (recordingContext_.tayBuffer_.file() == nullptr)
-      ADOLCError::fail(ADOLCError::ErrorType::TAY_NULLPTR, CURRENT_LOCATION);
-
-    if (fseek(recordingContext_.tayBuffer_.file(),
-              static_cast<long>(sizeof(double) * nextBufferNumber() *
-                                tapestats(TapeInfos::TAY_BUFFER_SIZE)),
-              SEEK_SET) == -1)
-      ADOLCError::fail(ADOLCError::ErrorType::EVAL_SEEK_VALUE_STACK,
-                       CURRENT_LOCATION);
-
-    const size_t chunkSize = ADOLC_IO_CHUNK_SIZE / sizeof(double);
-    const size_t chunks = number / chunkSize;
-
-    for (size_t i = 0; i < chunks; ++i)
-      if (fread(recordingContext_.tayBuffer_.begin() + i * chunkSize,
-                chunkSize * sizeof(double), 1,
-                recordingContext_.tayBuffer_.file()) != 1)
-        ADOLCError::fail(ADOLCError::ErrorType::TAPING_FATAL_IO_ERROR,
-                         CURRENT_LOCATION);
-
-    const size_t remain = number % chunkSize;
-
-    if (remain != 0)
-      if (fread(recordingContext_.tayBuffer_.begin() + chunks * chunkSize,
-                remain * sizeof(double), 1,
-                recordingContext_.tayBuffer_.file()) != 1)
-        ADOLCError::fail(ADOLCError::ErrorType::TAPING_FATAL_IO_ERROR,
-                         CURRENT_LOCATION);
-  }
-  decrement_nextBufferNumber();
-}
-
-/****************************************************************************/
-/****************************************************************************/
-/* NON-VALUE-STACK FUNCTIONS                                                */
-/****************************************************************************/
-/****************************************************************************/
-
-void ValueTape::initTapeBuffers() {
-  recordingContext_.opBuffer_.allocIfNull(tapestats(TapeInfos::OP_BUFFER_SIZE));
-  recordingContext_.valBuffer_.allocIfNull(
-      tapestats(TapeInfos::VAL_BUFFER_SIZE));
-  recordingContext_.locBuffer_.allocIfNull(
-      tapestats(TapeInfos::LOC_BUFFER_SIZE));
 }
 
 /****************************************************************************/
@@ -288,9 +225,9 @@ void ValueTape::start_trace() {
 
   initTapeBuffers();
   // reset the position pointer to first entry
-  recordingContext_.opBuffer_.position(0);
-  recordingContext_.locBuffer_.position(0);
-  recordingContext_.valBuffer_.position(0);
+  recordCtx_.opBuffer_.position(0);
+  recordCtx_.locBuffer_.position(0);
+  recordCtx_.valBuffer_.position(0);
 
   num_eq_prod(0);
   numSwitches(0);
@@ -316,35 +253,36 @@ void ValueTape::start_trace() {
 
 void ValueTape::save_params() {
   tapestats(TapeInfos::NUM_PARAM, numparam());
-  if (paramstore())
-    delete[] paramstore();
+  delete[] recordCtx_.paramstore;
+  recordCtx_.paramstore = nullptr;
 
-  paramstore(new double[tapestats(TapeInfos::NUM_PARAM)]);
+  recordCtx_.paramstore = new double[tapestats(TapeInfos::NUM_PARAM)];
 
   // Sometimes we have pStore == nullptr and stats[TapeInfos::NUM_PARAM] == 0.
   // Calling memcpy with that is undefined behavior, and sanitizers will issue a
   // warning.
   if (tapestats(TapeInfos::NUM_PARAM) > 0)
-    memcpy(paramstore(), pStore(),
+    memcpy(recordCtx_.paramstore, pStore(),
            tapestats(TapeInfos::NUM_PARAM) * sizeof(double));
 
   free_all_taping_params();
-  if (recordingContext_.valBuffer_.position() <
-      recordingContext_.valBuffer_.capacity() - tapestats(TapeInfos::NUM_PARAM))
-    put_vals_notWriteBlock(paramstore(), tapestats(TapeInfos::NUM_PARAM));
+  if (recordCtx_.valBuffer_.position() <
+      recordCtx_.valBuffer_.capacity() - tapestats(TapeInfos::NUM_PARAM))
+    put_vals_notWriteBlock(recordCtx_.paramstore,
+                           tapestats(TapeInfos::NUM_PARAM));
   else {
     size_t np = tapestats(TapeInfos::NUM_PARAM);
     size_t ip = 0;
     size_t remain = 0;
     while (tapestats(TapeInfos::NUM_PARAM) > ip) {
       remain = tapestats(TapeInfos::NUM_PARAM) - ip;
-      const size_t avail = recordingContext_.valBuffer_.remainingCapacity();
+      const size_t avail = recordCtx_.valBuffer_.remainingCapacity();
       const size_t chunk = (avail < remain) ? avail : remain;
-      put_vals_notWriteBlock(paramstore() + ip, chunk);
+      put_vals_notWriteBlock(recordCtx_.paramstore + ip, chunk);
       ip += chunk;
       if (ip < np)
-        recordingContext_.put_block<ValInfo<RecordingContext, ErrorType>>(
-            val_fileName(), recordingContext_.valBuffer_.capacity());
+        recordCtx_.put_block<ValInfo<TapeRecordingContext, ErrorType>>(
+            val_fileName(), recordCtx_.valBuffer_.capacity());
     }
   }
 }
@@ -365,16 +303,15 @@ void ValueTape::stop_trace(int flag) {
   if (keepTaylors())
     taylor_close();
 
-  tapestats(TapeInfos::NUM_TAYS, recordingContext_.tayBuffer_.numOnTape());
+  tapestats(TapeInfos::NUM_TAYS, recordCtx_.tayBuffer_.numOnTape());
 
   /* The taylor stack size base estimation results in a doubled taylor count
    * if we tape with keep (taylors counted in adouble.cpp/avector.cpp and
    * "keep_stock" even if not written and a second time when actually
    * written by "put_tay_block"). Correction follows here. */
-  if (keepTaylors() != 0 && recordingContext_.tayBuffer_.file() != nullptr) {
+  if (keepTaylors() != 0 && recordCtx_.tayBuffer_.file() != nullptr) {
     tapestats(TapeInfos::NUM_TAYS, tapestats(TapeInfos::NUM_TAYS) / 2);
-    recordingContext_.tayBuffer_.numOnTape(
-        recordingContext_.tayBuffer_.numOnTape() / 2);
+    recordCtx_.tayBuffer_.numOnTape(recordCtx_.tayBuffer_.numOnTape() / 2);
   }
 
   close_tape(flag); /* closes the tape, files up stats, and writes the
@@ -386,68 +323,63 @@ void ValueTape::stop_trace(int flag) {
 /****************************************************************************/
 void ValueTape::close_tape(int flag) {
   /* finish operations tape, close it, update stats */
-  if (flag != 0 || (recordingContext_.opBuffer_.file() != nullptr)) {
-    if (recordingContext_.opBuffer_.position() > 0) {
-      recordingContext_.put_block<OpInfo<RecordingContext, ErrorType>>(
-          op_fileName(), recordingContext_.opBuffer_.position());
+  if (flag != 0 || (recordCtx_.opBuffer_.file() != nullptr)) {
+    if (recordCtx_.opBuffer_.position() > 0) {
+      recordCtx_.put_block<OpInfo<TapeRecordingContext, ErrorType>>(
+          op_fileName(), recordCtx_.opBuffer_.position());
     }
     tapestats(TapeInfos::OP_FILE_ACCESS, 1);
-    recordingContext_.opBuffer_.closeFile();
-    delete[] recordingContext_.opBuffer_.releaseBuffer();
+    recordCtx_.opBuffer_.closeFile();
+    delete[] recordCtx_.opBuffer_.releaseBuffer();
   } else {
-    recordingContext_.opBuffer_.numOnTape(
-        recordingContext_.opBuffer_.position());
+    recordCtx_.opBuffer_.numOnTape(recordCtx_.opBuffer_.position());
   }
-  tapestats(TapeInfos::NUM_OPERATIONS, recordingContext_.opBuffer_.numOnTape());
+  tapestats(TapeInfos::NUM_OPERATIONS, recordCtx_.opBuffer_.numOnTape());
 
   /* finish constants tape, close it, update stats */
-  if (flag != 0 || recordingContext_.valBuffer_.file() != nullptr) {
-    if (recordingContext_.valBuffer_.position() != 0) {
-      recordingContext_.put_block<ValInfo<RecordingContext, ErrorType>>(
-          val_fileName(), recordingContext_.valBuffer_.position());
+  if (flag != 0 || recordCtx_.valBuffer_.file() != nullptr) {
+    if (recordCtx_.valBuffer_.position() != 0) {
+      recordCtx_.put_block<ValInfo<TapeRecordingContext, ErrorType>>(
+          val_fileName(), recordCtx_.valBuffer_.position());
     }
     tapestats(TapeInfos::VAL_FILE_ACCESS, 1);
-    recordingContext_.valBuffer_.closeFile();
-    delete[] recordingContext_.valBuffer_.releaseBuffer();
+    recordCtx_.valBuffer_.closeFile();
+    delete[] recordCtx_.valBuffer_.releaseBuffer();
   } else {
-    recordingContext_.valBuffer_.numOnTape(
-        recordingContext_.valBuffer_.position());
+    recordCtx_.valBuffer_.numOnTape(recordCtx_.valBuffer_.position());
   }
-  tapestats(TapeInfos::NUM_VALUES, recordingContext_.valBuffer_.numOnTape());
+  tapestats(TapeInfos::NUM_VALUES, recordCtx_.valBuffer_.numOnTape());
 
   /* finish locations tape, update and write tape stats, close tape */
-  if (flag != 0 || (recordingContext_.locBuffer_.file() != nullptr)) {
-    if (recordingContext_.locBuffer_.position() != 0) {
-      recordingContext_.put_block<LocInfo<RecordingContext, ErrorType>>(
-          loc_fileName(), recordingContext_.locBuffer_.position());
+  if (flag != 0 || (recordCtx_.locBuffer_.file() != nullptr)) {
+    if (recordCtx_.locBuffer_.position() != 0) {
+      recordCtx_.put_block<LocInfo<TapeRecordingContext, ErrorType>>(
+          loc_fileName(), recordCtx_.locBuffer_.position());
     }
-    tapestats(TapeInfos::NUM_LOCATIONS,
-              recordingContext_.locBuffer_.numOnTape());
+    tapestats(TapeInfos::NUM_LOCATIONS, recordCtx_.locBuffer_.numOnTape());
     tapestats(TapeInfos::LOC_FILE_ACCESS, 1);
     /* write tape stats */
-    fseek(recordingContext_.locBuffer_.file(), 0, 0);
-    fwrite(&get_adolc_id(), sizeof(ADOLC_ID), 1,
-           recordingContext_.locBuffer_.file());
+    fseek(recordCtx_.locBuffer_.file(), 0, 0);
+    fwrite(&get_adolc_id(), sizeof(ADOLC_ID), 1, recordCtx_.locBuffer_.file());
     fwrite(tapeInfos_.stats.data(), TapeInfos::STAT_SIZE * sizeof(size_t), 1,
-           recordingContext_.locBuffer_.file());
-    recordingContext_.locBuffer_.closeFile();
-    delete[] recordingContext_.locBuffer_.releaseBuffer();
+           recordCtx_.locBuffer_.file());
+    recordCtx_.locBuffer_.closeFile();
+    delete[] recordCtx_.locBuffer_.releaseBuffer();
   } else {
-    recordingContext_.locBuffer_.numOnTape(
-        recordingContext_.locBuffer_.position());
-    tapestats(TapeInfos::NUM_LOCATIONS,
-              recordingContext_.locBuffer_.numOnTape());
+    recordCtx_.locBuffer_.numOnTape(recordCtx_.locBuffer_.position());
+    tapestats(TapeInfos::NUM_LOCATIONS, recordCtx_.locBuffer_.numOnTape());
   }
 }
 
 /****************************************************************************/
 /* Reads parameters from the end of value tape for disk based tapes         */
 /****************************************************************************/
-void ValueTape::read_params() {
+
+void ValueTape::readParams(double *&targetStore) {
   constexpr size_t chunkSize = ADOLC_IO_CHUNK_SIZE / sizeof(double);
 
-  if (!paramstore())
-    paramstore(new double[tapestats(TapeInfos::NUM_PARAM)]);
+  if (targetStore == nullptr)
+    targetStore = new double[tapestats(TapeInfos::NUM_PARAM)];
 
   double *valBuffer = new double[tapestats(TapeInfos::VAL_BUFFER_SIZE)];
   double *lastValP1 = valBuffer + tapestats(TapeInfos::VAL_BUFFER_SIZE);
@@ -489,7 +421,7 @@ void ValueTape::read_params() {
   while (ip > 0) {
     size_t avail = to_size_t(currVal - valBuffer);
     size_t rsize = (avail < ip) ? avail : ip;
-    double *paramstore_view = paramstore();
+    double *paramstore_view = targetStore;
     for (size_t i = 0; i < rsize; ++i)
       paramstore_view[--ip] = *--currVal;
 
@@ -548,11 +480,11 @@ void ValueTape::setParamVec(std::span<const double> paramvec) {
 
   workMode(TapeInfos::WRITE_ACCESS);
 
-  if (!paramstore())
-    paramstore(new double[tapestats(TapeInfos::NUM_PARAM)]);
+  if (!recordCtx_.paramstore)
+    recordCtx_.paramstore = new double[tapestats(TapeInfos::NUM_PARAM)];
 
   auto paramstore_view =
-      std::span<double>(paramstore(), tapestats(TapeInfos::NUM_PARAM));
+      std::span<double>(recordCtx_.paramstore, tapestats(TapeInfos::NUM_PARAM));
   for (size_t i = 0; i < paramstore_view.size(); ++i)
     paramstore_view[i] = paramvec[i];
 
@@ -600,78 +532,27 @@ void ValueTape::read_tape_stats() {
   using ADOLCError::fail;
   using ADOLCError::FailInfo;
   using ADOLCError::ErrorType::INTEGER_TAPE_FOPEN_FAILED;
-  using ADOLCError::ErrorType::TAPING_TAPE_STILL_IN_USE;
-
   ADOLC_ID tape_ADOLC_ID{};
-  FILE *loc_file = fopen(loc_fileName(), "rb");
+  std::unique_ptr<FILE, decltype(&fclose)> loc_file(fopen(loc_fileName(), "rb"),
+                                                    &fclose);
   if (loc_file == nullptr ||
-      (fread(&tape_ADOLC_ID, sizeof(ADOLC_ID), 1, loc_file) != 1) ||
+      (fread(&tape_ADOLC_ID, sizeof(ADOLC_ID), 1, loc_file.get()) != 1) ||
       (fread(tapeInfos_.stats.data(), TapeInfos::STAT_SIZE * sizeof(size_t), 1,
-             loc_file) != 1)) {
+             loc_file.get()) != 1)) {
     fail(INTEGER_TAPE_FOPEN_FAILED, CURRENT_LOCATION,
          FailInfo{.info1 = tapeId()});
   }
-
   compare_adolc_ids(get_adolc_id(), tape_ADOLC_ID);
-  fclose(loc_file);
-  if (tapestats(TapeInfos::NUM_PARAM) > 0)
-    read_params();
 }
 
 /****************************************************************************/
 /* Finish a forward or reverse sweep. */
 /****************************************************************************/
-void ValueTape::end_sweep() {
-  recordingContext_.opBuffer_.closeFile();
-  recordingContext_.locBuffer_.closeFile();
-  recordingContext_.valBuffer_.closeFile();
+void ValueTape::end_sweep(TapeEvaluationContext &&evalCtx) {
+  evalCtx.closeSweepFiles();
+  recordCtx_ = TapeRecordingContext();
+  evalCtx.releaseTo(recordCtx_);
   workMode(TapeInfos::NO_MODE);
-}
-
-/****************************************************************************/
-/* Discards parameters from the end of value tape during reverse mode */
-/****************************************************************************/
-void ValueTape::discard_params_r(void) {
-  constexpr size_t chunkSize = ADOLC_IO_CHUNK_SIZE / sizeof(double);
-  const size_t valueBufferSize = tapestats(TapeInfos::VAL_BUFFER_SIZE);
-  size_t ip = tapestats(TapeInfos::NUM_PARAM);
-  size_t rsize = 0;
-  size_t remain = 0;
-  while (ip > 0) {
-    rsize = recordingContext_.valBuffer_.position();
-    rsize = (rsize < ip) ? rsize : ip;
-    ip -= rsize;
-    recordingContext_.valBuffer_.position(
-        recordingContext_.valBuffer_.position() - rsize);
-    if (ip > 0) {
-      fseek(recordingContext_.valBuffer_.file(),
-            static_cast<long>(
-                sizeof(double) *
-                (recordingContext_.valBuffer_.numOnTape() - valueBufferSize)),
-            SEEK_SET);
-
-      const size_t chunks = valueBufferSize / chunkSize;
-      for (size_t i = 0; i < chunks; ++i)
-        if (fread(recordingContext_.valBuffer_.begin() + i * chunkSize,
-                  chunkSize * sizeof(double), 1,
-                  recordingContext_.valBuffer_.file()) != 1)
-          ADOLCError::fail(ADOLCError::ErrorType::VAL_READ_FAILED,
-                           CURRENT_LOCATION);
-
-      remain = valueBufferSize % chunkSize;
-      if (remain != 0)
-        if (fread(recordingContext_.valBuffer_.begin() + chunks * chunkSize,
-                  remain * sizeof(double), 1,
-                  recordingContext_.valBuffer_.file()) != 1)
-          ADOLCError::fail(ADOLCError::ErrorType::VAL_READ_FAILED,
-                           CURRENT_LOCATION);
-
-      recordingContext_.valBuffer_.numOnTape(
-          recordingContext_.valBuffer_.numOnTape() - valueBufferSize);
-      recordingContext_.valBuffer_.position(
-          recordingContext_.valBuffer_.capacity());
-    }
-  }
 }
 
 // the following macros are used in readConfigFile()

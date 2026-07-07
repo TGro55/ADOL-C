@@ -144,6 +144,7 @@ sparsity pattern (crs):
 [3, 0, 2, 3]
 --------------------------------------------------------------------
 */
+#include "adolc/sparse/sparsedrivers.h"
 #define BOOST_TEST_DYN_LINK
 #include "../const.h"
 #include <adolc/adolc.h>

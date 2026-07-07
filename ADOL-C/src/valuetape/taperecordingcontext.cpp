@@ -8,124 +8,6 @@
 
 namespace ADOLC::detail {
 
-/****************************************************************************/
-/* Writes the block of size depth of taylor coefficients from point loc to  */
-/* the taylor buffer. If the buffer is filled, then it is written to the    */
-/* taylor tape.                                                             */
-/****************************************************************************/
-void TapeRecordingContext::write_taylor(double *taylorCoefficientPos,
-                                        std::ptrdiff_t keep,
-                                        const char *tay_fileName) {
-  using TayInfoT = ADOLC::detail::TayInfo<TapeRecordingContext, ErrorType>;
-  size_t remaining = static_cast<size_t>(keep);
-  while (remaining > tayBuffer_.remainingCapacity()) {
-    for (auto i = tayBuffer_.position(); i < tayBuffer_.capacity(); ++i) {
-      tayBuffer_[i] = *taylorCoefficientPos;
-      ++taylorCoefficientPos;
-    }
-    remaining -= tayBuffer_.remainingCapacity();
-    put_block<TayInfoT>(tay_fileName, tayBuffer_.capacity());
-  }
-
-  for (size_t i = 0; i < remaining; ++i) {
-    tayBuffer_[i + tayBuffer_.position()] = *taylorCoefficientPos;
-    ++taylorCoefficientPos;
-  }
-  tayBuffer_.position(tayBuffer_.position() + remaining);
-}
-
-void TapeRecordingContext::write_taylors(double *taylorCoefficientPos, int keep,
-                                         int degree, int numDir,
-                                         const char *tay_fileName) {
-  using TayInfoT = ADOLC::detail::TayInfo<TapeRecordingContext, ErrorType>;
-  for (int j = 0; j < numDir; ++j) {
-    for (int i = 0; i < keep; ++i) {
-      if (tayBuffer_.position() == tayBuffer_.capacity()) {
-        put_block<TayInfoT>(tay_fileName, tayBuffer_.capacity());
-      }
-
-      tayBuffer_.writeAndAdvance(*taylorCoefficientPos);
-      ++taylorCoefficientPos;
-    }
-    if (degree > keep)
-      taylorCoefficientPos += degree - keep;
-  }
-}
-
-void TapeRecordingContext::write_scaylors(const double *taylorCoefficientPos,
-                                          std::ptrdiff_t size,
-                                          const char *tay_fileName) {
-  using TayInfoT = ADOLC::detail::TayInfo<TapeRecordingContext, ErrorType>;
-
-  auto remaining = static_cast<size_t>(size);
-  size_t pos = 0;
-  while (remaining > tayBuffer_.remainingCapacity()) {
-    std::span<double> taySpan(tayBuffer_.current(),
-                              tayBuffer_.begin() + tayBuffer_.capacity());
-    for (double &tay : taySpan) {
-      tay = taylorCoefficientPos[pos++];
-    }
-    remaining -= tayBuffer_.remainingCapacity();
-    put_block<TayInfoT>(tay_fileName, tayBuffer_.capacity());
-  }
-
-  std::span<double> tayBufferSpan(tayBuffer_.current(),
-                                  tayBuffer_.current() + remaining);
-  for (double &tay : tayBufferSpan) {
-    tay = taylorCoefficientPos[pos++];
-  }
-  tayBuffer_.position(tayBuffer_.position() + remaining);
-}
-
-void TapeRecordingContext::get_taylors(double *taylorCoefficients,
-                                       std::ptrdiff_t degree,
-                                       size_t taylorBufferSize) {
-  using TayInfoT = ADOLC::detail::TayInfo<TapeRecordingContext, ErrorType>;
-  double *T = taylorCoefficients + degree;
-  while (tayBuffer_.position() < static_cast<size_t>(degree)) {
-    std::span<double> taySpan(tayBuffer_.begin(), tayBuffer_.current());
-    for (auto tay = taySpan.rbegin(); tay != taySpan.rend(); tay++) {
-      *(T--) = *tay;
-    }
-    degree -= tayBuffer_.position();
-    loadBlockIntoBufferReverse<TayInfoT>(taylorBufferSize);
-  }
-
-  /* Copy the remaining values from the stack into the buffer ... */
-  for (int j = 0; j < degree; ++j) {
-    *(--T) = tayBuffer_.retreatAndRead();
-  }
-}
-
-void TapeRecordingContext::get_taylors_p(double *taylorCoefficients, int degree,
-                                         int numDir, size_t taylorBufferSize) {
-  using TayInfoT = ADOLC::detail::TayInfo<TapeRecordingContext, ErrorType>;
-  double *T = taylorCoefficients + (static_cast<ptrdiff_t>(degree * numDir));
-
-  /* update the directions except the base point parts */
-  for (int j = 0; j < numDir; ++j) {
-    for (int i = 1; i < degree; ++i) {
-      if (tayBuffer_.position() == 0) {
-        loadBlockIntoBufferReverse<TayInfoT>(taylorBufferSize);
-      }
-
-      --T;
-      *T = tayBuffer_.retreatAndRead();
-    }
-    --T; /* skip the base point part */
-  }
-  /* now update the base point parts */
-  if (tayBuffer_.position() == 0) {
-    loadBlockIntoBufferReverse<TayInfoT>(taylorBufferSize);
-  }
-
-  tayBuffer_.retreat();
-  for (int i = 0; i < numDir; ++i) {
-    *T = *tayBuffer_.current();
-    T += degree;
-  }
-}
-
 /**
  * Functions for handling operations tape
  */
@@ -143,7 +25,7 @@ void TapeRecordingContext::put_op(OPCODES op, const char *loc_fileName,
 
   /* make sure we have enough slots to write the locs */
   if (locBuffer_.position() >
-      locBuffer_.capacity() - maxLocsPerOp - reserveExtraLocations) {
+      locBuffer_.capacity() - TapeInfos::maxLocsPerOp - reserveExtraLocations) {
     const size_t remainder = locBuffer_.remainingCapacity();
     if (remainder > 0)
       std::memset(locBuffer_.current(), 0, (remainder - 1) * sizeof(size_t));

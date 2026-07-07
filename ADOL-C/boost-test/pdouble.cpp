@@ -2,7 +2,6 @@
 /*
 File for explicit testing the pdouble type file.
 */
-
 #define BOOST_TEST_DYN_LINK
 #include "const.h"
 #include <adolc/adolc.h>

@@ -25,6 +25,7 @@
 #include <adolc/valuetape/valuetape.h>
 #include <math.h>
 #include <string.h>
+#include <utility>
 
 #ifdef ADOLC_AMPI_SUPPORT
 #include "ampi/ampi.h"
@@ -230,9 +231,9 @@ void tape_doc(short tnum,     /* tape id */
               const double *, /* independent variable values */
               double *)       /* dependent variable values */
 {
-  using LocInfo = ADOLC::detail::LocInfo<RecordingContext, ErrorType>;
-  using OpInfo = ADOLC::detail::OpInfo<RecordingContext, ErrorType>;
-  using ValInfo = ADOLC::detail::ValInfo<RecordingContext, ErrorType>;
+  using LocInfo = ADOLC::detail::LocInfo<TapeEvaluationContext, ErrorType>;
+  using OpInfo = ADOLC::detail::OpInfo<TapeEvaluationContext, ErrorType>;
+  using ValInfo = ADOLC::detail::ValInfo<TapeEvaluationContext, ErrorType>;
   /****************************************************************************/
   /*                                                            ALL VARIABLES */
   unsigned char operation;
@@ -270,7 +271,7 @@ void tape_doc(short tnum,     /* tape id */
   int i;
   double aDouble;
 #endif
-  tape.init_sweep<ValueTape::Forward>();
+  auto evalCtx = tape.init_sweep<ValueTape::Forward>();
   tag = tnum;
 
   if ((to_size_t(depcheck) != tape.tapestats(TapeInfos::NUM_DEPENDENTS)) ||
@@ -290,7 +291,7 @@ void tape_doc(short tnum,     /* tape id */
 
   dp_T0 = myalloc1(tape.tapestats(TapeInfos::NUM_MAX_LIVES));
 
-  operation = tape.loadNextForward<OpInfo>();
+  operation = evalCtx.loadNextForward<OpInfo>();
   ++op_cnt;
   --rev_op_cnt;
   while (operation != end_of_tape) {
@@ -303,8 +304,9 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case end_of_op: /* end_of_op */
       filewrite(operation, "end of op", 0, loc_a, 0, cst_d);
-      tape.loadBlockIntoBufferForward<OpInfo>();
-      operation = tape.loadNextForward<OpInfo>();
+      evalCtx.loadBlockIntoBufferForward<OpInfo>(
+          tape.tapestats(OpInfo::bufferSize));
+      operation = evalCtx.loadNextForward<OpInfo>();
       ++op_cnt;
       --rev_op_cnt;
       /* Skip next operation, it's another end_of_op */
@@ -313,13 +315,15 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case end_of_int: /* end_of_int */
       filewrite(operation, "end of int", 0, loc_a, 0, cst_d);
-      tape.loadBlockIntoBufferForward<LocInfo>();
+      evalCtx.loadBlockIntoBufferForward<LocInfo>(
+          tape.tapestats(LocInfo::bufferSize));
       break;
 
       /*--------------------------------------------------------------------------*/
     case end_of_val: /* end_of_val */
       filewrite(operation, "end of val", 0, loc_a, 0, cst_d);
-      tape.loadBlockIntoBufferForward<ValInfo>();
+      evalCtx.loadBlockIntoBufferForward<ValInfo>(
+          tape.tapestats(ValInfo::bufferSize));
       break;
 
       /*--------------------------------------------------------------------------*/
@@ -337,7 +341,7 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case eq_zero: /* eq_zero */
-      arg = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
 #ifdef ADOLC_TAPE_DOC_VALUES
       val_a[0] = dp_T0[arg];
@@ -345,7 +349,7 @@ void tape_doc(short tnum,     /* tape id */
       filewrite(operation, "eq zero", 1, loc_a, 0, cst_d);
       break;
     case neq_zero: /* neq_zero */
-      arg = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
 #ifdef ADOLC_TAPE_DOC_VALUES
       val_a[0] = dp_T0[arg];
@@ -353,7 +357,7 @@ void tape_doc(short tnum,     /* tape id */
       filewrite(operation, "neq zero", 1, loc_a, 0, cst_d);
       break;
     case le_zero: /* le_zero */
-      arg = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
 #ifdef ADOLC_TAPE_DOC_VALUES
       val_a[0] = dp_T0[arg];
@@ -361,7 +365,7 @@ void tape_doc(short tnum,     /* tape id */
       filewrite(operation, "le zero", 1, loc_a, 0, cst_d);
       break;
     case gt_zero: /* gt_zero */
-      arg = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
 #ifdef ADOLC_TAPE_DOC_VALUES
       val_a[0] = dp_T0[arg];
@@ -369,7 +373,7 @@ void tape_doc(short tnum,     /* tape id */
       filewrite(operation, "gt zero", 1, loc_a, 0, cst_d);
       break;
     case ge_zero: /* ge_zero */
-      arg = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
 #ifdef ADOLC_TAPE_DOC_VALUES
       val_a[0] = dp_T0[arg];
@@ -377,7 +381,7 @@ void tape_doc(short tnum,     /* tape id */
       filewrite(operation, "ge zero", 1, loc_a, 0, cst_d);
       break;
     case lt_zero: /* lt_zero */
-      arg = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
 #ifdef ADOLC_TAPE_DOC_VALUES
       val_a[0] = dp_T0[arg];
@@ -392,8 +396,8 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case assign_a: /* assign an adouble variable an    assign_a */
       /* adouble value. (=) */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
@@ -407,8 +411,8 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case assign_d: /* assign an adouble variable a    assign_d */
       /* double value. (=) */
-      res = tape.loadNextForward<LocInfo>();
-      cst_d[0] = tape.loadNextForward<ValInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      cst_d[0] = evalCtx.loadNextForward<ValInfo>();
       loc_a[0] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
       dp_T0[res] = cst_d[0];
@@ -420,7 +424,7 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case assign_d_one: /* assign an adouble variable a    assign_d_one */
       /* double value. (1) (=) */
-      res = tape.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
       dp_T0[res] = 1.0;
@@ -432,7 +436,7 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case assign_d_zero: /* assign an adouble variable a    assign_d_zero */
       /* double value. (0) (=) */
-      res = tape.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
       dp_T0[res] = 0.0;
@@ -444,7 +448,7 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case assign_ind: /* assign an adouble variable an    assign_ind */
       /* independent double value (<<=) */
-      res = tape.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
       dp_T0[res] = basepoint[indexi];
@@ -460,7 +464,7 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case assign_dep: /* assign a float variable a    assign_dep */
       /* dependent adouble value. (>>=) */
-      res = tape.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
       val_a[0] = dp_T0[res];
@@ -476,8 +480,8 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case eq_plus_d: /* Add a floating point to an    eq_plus_d */
       /* adouble. (+=) */
-      res = tape.loadNextForward<LocInfo>();
-      coval = tape.loadNextForward<ValInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      coval = evalCtx.loadNextForward<ValInfo>();
       loc_a[0] = res;
       cst_d[0] = coval;
 #ifdef ADOLC_TAPE_DOC_VALUES
@@ -490,8 +494,8 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case eq_plus_a: /* Add an adouble to another    eq_plus_a */
       /* adouble. (+=) */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
@@ -505,9 +509,9 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case eq_plus_prod: /* Add an product to an            eq_plus_prod */
       /* adouble. (+= x1*x2) */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -523,8 +527,8 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case eq_min_d: /* Subtract a floating point from an    eq_min_d */
       /* adouble. (-=) */
-      res = tape.loadNextForward<LocInfo>();
-      coval = tape.loadNextForward<ValInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      coval = evalCtx.loadNextForward<ValInfo>();
       loc_a[0] = res;
       cst_d[0] = coval;
 #ifdef ADOLC_TAPE_DOC_VALUES
@@ -537,8 +541,8 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case eq_min_a: /* Subtract an adouble from another    eq_min_a */
       /* adouble. (-=) */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
@@ -552,9 +556,9 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case eq_min_prod: /* Subtract an product from an      eq_min_prod */
       /* adouble. (+= x1*x2) */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -570,8 +574,8 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case eq_mult_d: /* Multiply an adouble by a    eq_mult_d */
       /* flaoting point. (*=) */
-      res = tape.loadNextForward<LocInfo>();
-      coval = tape.loadNextForward<ValInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      coval = evalCtx.loadNextForward<ValInfo>();
       loc_a[0] = res;
       cst_d[0] = coval;
 #ifdef ADOLC_TAPE_DOC_VALUES
@@ -584,8 +588,8 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case eq_mult_a: /* Multiply one adouble by another    eq_mult_a */
       /* (*=) */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
@@ -598,7 +602,7 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case incr_a: /* Increment an adouble    incr_a */
-      res = tape.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
       dp_T0[res]++;
@@ -609,7 +613,7 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case decr_a: /* Increment an adouble    decr_a */
-      res = tape.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
       dp_T0[res]--;
@@ -624,9 +628,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case plus_a_a: /* : Add two adoubles. (+)    plus a_a */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -642,9 +646,9 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case plus_d_a: /* Add an adouble and a double    plus_d_a */
       /* (+) */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
-      coval = tape.loadNextForward<ValInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      coval = evalCtx.loadNextForward<ValInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
       cst_d[0] = coval;
@@ -659,9 +663,9 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case min_a_a: /* Subtraction of two adoubles     min_a_a */
       /* (-) */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -677,9 +681,9 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case min_d_a: /* Subtract an adouble from a    min_d_a */
       /* double (-) */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
-      coval = tape.loadNextForward<ValInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      coval = evalCtx.loadNextForward<ValInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
       cst_d[0] = coval;
@@ -693,9 +697,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case mult_a_a: /* Multiply two adoubles (*)    mult_a_a */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -711,9 +715,9 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case mult_d_a: /* Multiply an adouble by a double    mult_d_a */
       /* (*) */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
-      coval = tape.loadNextForward<ValInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      coval = evalCtx.loadNextForward<ValInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
       cst_d[0] = coval;
@@ -728,9 +732,9 @@ void tape_doc(short tnum,     /* tape id */
       /*--------------------------------------------------------------------------*/
     case div_a_a: /* Divide an adouble by an adouble    div_a_a */
       /* (/) */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -745,9 +749,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case div_d_a: /* Division double - adouble (/)    div_d_a */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
-      coval = tape.loadNextForward<ValInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      coval = evalCtx.loadNextForward<ValInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
       cst_d[0] = coval;
@@ -765,8 +769,8 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case pos_sign_a: /* pos_sign_a */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
@@ -779,8 +783,8 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case neg_sign_a: /* neg_sign_a */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
@@ -797,8 +801,8 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case exp_op: /* exponent operation    exp_op */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
@@ -812,9 +816,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case sin_op: /* sine operation    sin_op */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -832,9 +836,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case cos_op: /* cosine operation    cos_op */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -852,9 +856,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case atan_op: /* atan_op */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -870,9 +874,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case asin_op: /* asin_op */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -888,9 +892,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case acos_op: /* acos_op */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -906,9 +910,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case asinh_op: /* asinh_op */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -924,9 +928,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case acosh_op: /* acosh_op */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -942,9 +946,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case atanh_op: /* atanh_op */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -960,9 +964,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case erf_op: /* erf_op */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -978,9 +982,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case erfc_op: /* erfc_op */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -996,8 +1000,8 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case log_op: /* log_op */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
@@ -1011,9 +1015,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case pow_op: /* pow_op */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
-      coval = tape.loadNextForward<ValInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      coval = evalCtx.loadNextForward<ValInfo>();
       cst_d[0] = coval;
       loc_a[0] = arg;
       loc_a[1] = res;
@@ -1028,8 +1032,8 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case sqrt_op: /* sqrt_op */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
@@ -1043,8 +1047,8 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case cbrt_op: /* cbrt_op */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
 #ifdef ADOLC_TAPE_DOC_VALUES
@@ -1058,11 +1062,11 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case gen_quad: /* gen_quad */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
-      cst_d[0] = tape.loadNextForward<ValInfo>();
-      cst_d[1] = tape.loadNextForward<ValInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      cst_d[0] = evalCtx.loadNextForward<ValInfo>();
+      cst_d[1] = evalCtx.loadNextForward<ValInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -1077,10 +1081,10 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case min_op: /* min_op */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
-      coval = tape.loadNextForward<ValInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      coval = evalCtx.loadNextForward<ValInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       loc_a[2] = res;
@@ -1099,9 +1103,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case abs_val: /* abs_val */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
-      coval = tape.loadNextForward<ValInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      coval = evalCtx.loadNextForward<ValInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
       cst_d[0] = coval;
@@ -1115,9 +1119,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case ceil_op: /* ceil_op */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
-      coval = tape.loadNextForward<ValInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      coval = evalCtx.loadNextForward<ValInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
       cst_d[0] = coval;
@@ -1131,9 +1135,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case floor_op: /* Compute ceil of adouble    floor_op */
-      arg = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
-      coval = tape.loadNextForward<ValInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      coval = evalCtx.loadNextForward<ValInfo>();
       loc_a[0] = arg;
       loc_a[1] = res;
       cst_d[0] = coval;
@@ -1151,11 +1155,11 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case cond_assign: /* cond_assign */
-      arg = tape.loadNextForward<LocInfo>();
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
-      coval = tape.loadNextForward<ValInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      coval = evalCtx.loadNextForward<ValInfo>();
       loc_a[0] = arg;
       loc_a[1] = arg1;
       loc_a[2] = arg2;
@@ -1177,10 +1181,10 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case cond_assign_s: /* cond_assign_s */
-      arg = tape.loadNextForward<LocInfo>();
-      arg1 = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
-      coval = tape.loadNextForward<ValInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      coval = evalCtx.loadNextForward<ValInfo>();
       loc_a[0] = arg;
       loc_a[1] = arg1;
       loc_a[2] = res;
@@ -1197,9 +1201,9 @@ void tape_doc(short tnum,     /* tape id */
       break;
 
     case vec_copy:
-      res = tape.loadNextForward<LocInfo>();
-      arg = tape.loadNextForward<LocInfo>();
-      size = tape.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      size = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = res;
       loc_a[1] = arg;
       loc_a[2] = size;
@@ -1211,10 +1215,10 @@ void tape_doc(short tnum,     /* tape id */
       break;
 
     case vec_dot:
-      res = tape.loadNextForward<LocInfo>();
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      size = tape.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      size = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = res;
       loc_a[1] = arg1;
       loc_a[2] = arg2;
@@ -1229,11 +1233,11 @@ void tape_doc(short tnum,     /* tape id */
       break;
 
     case vec_axpy:
-      res = tape.loadNextForward<LocInfo>();
-      arg = tape.loadNextForward<LocInfo>();
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
-      size = tape.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      size = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = res;
       loc_a[1] = arg;
       loc_a[1] = arg1;
@@ -1253,9 +1257,9 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case take_stock_op: /* take_stock_op */
-      size = tape.loadNextForward<LocInfo>();
-      res = tape.loadNextForward<LocInfo>();
-      d = tape.get_val_v_f(size);
+      size = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
+      d = evalCtx.get_val_v_f(size);
       loc_a[0] = size;
       loc_a[1] = res;
       cst_d[0] = d[0];
@@ -1270,8 +1274,8 @@ void tape_doc(short tnum,     /* tape id */
 
       /*--------------------------------------------------------------------------*/
     case death_not: /* death_not */
-      arg1 = tape.loadNextForward<LocInfo>();
-      arg2 = tape.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
       loc_a[0] = arg1;
       loc_a[1] = arg2;
       filewrite(operation, "death not", 2, loc_a, 0, cst_d);
@@ -1279,62 +1283,62 @@ void tape_doc(short tnum,     /* tape id */
 
       /****************************************************************************/
     case ext_diff:
-      loc_a[0] = tape.loadNextForward<LocInfo>() + 1; /* index */
-      loc_a[1] = tape.loadNextForward<LocInfo>();     /* n */
-      loc_a[2] = tape.loadNextForward<LocInfo>();     /* m */
-      loc_a[3] = tape.loadNextForward<LocInfo>();     /* xa[0].loc */
-      loc_a[3] = tape.loadNextForward<LocInfo>();     /* ya[0].loc */
-      loc_a[3] = tape.loadNextForward<LocInfo>();     /* dummy */
+      loc_a[0] = evalCtx.loadNextForward<LocInfo>() + 1; /* index */
+      loc_a[1] = evalCtx.loadNextForward<LocInfo>();     /* n */
+      loc_a[2] = evalCtx.loadNextForward<LocInfo>();     /* m */
+      loc_a[3] = evalCtx.loadNextForward<LocInfo>();     /* xa[0].loc */
+      loc_a[3] = evalCtx.loadNextForward<LocInfo>();     /* ya[0].loc */
+      loc_a[3] = evalCtx.loadNextForward<LocInfo>();     /* dummy */
       filewrite(operation, "extern diff", 3, loc_a, 0, cst_d);
       break;
 
     case ext_diff_iArr:
-      loc_a[0] = tape.loadNextForward<LocInfo>(); /* iArr length */
+      loc_a[0] = evalCtx.loadNextForward<LocInfo>(); /* iArr length */
       for (size_t l = 0; l < loc_a[0]; ++l)
-        tape.loadNextForward<LocInfo>();              /* iArr */
-      tape.loadNextForward<LocInfo>();                /* iArr length again */
-      loc_a[0] = tape.loadNextForward<LocInfo>() + 1; /* index */
-      loc_a[1] = tape.loadNextForward<LocInfo>();     /* n */
-      loc_a[2] = tape.loadNextForward<LocInfo>();     /* m */
-      loc_a[3] = tape.loadNextForward<LocInfo>();     /* xa[0].loc */
-      loc_a[3] = tape.loadNextForward<LocInfo>();     /* ya[0].loc */
-      loc_a[3] = tape.loadNextForward<LocInfo>();     /* dummy */
+        evalCtx.loadNextForward<LocInfo>();              /* iArr */
+      evalCtx.loadNextForward<LocInfo>();                /* iArr length again */
+      loc_a[0] = evalCtx.loadNextForward<LocInfo>() + 1; /* index */
+      loc_a[1] = evalCtx.loadNextForward<LocInfo>();     /* n */
+      loc_a[2] = evalCtx.loadNextForward<LocInfo>();     /* m */
+      loc_a[3] = evalCtx.loadNextForward<LocInfo>();     /* xa[0].loc */
+      loc_a[3] = evalCtx.loadNextForward<LocInfo>();     /* ya[0].loc */
+      loc_a[3] = evalCtx.loadNextForward<LocInfo>();     /* dummy */
       filewrite(operation, "extern diff iArr", 3, loc_a, 0, cst_d);
       break;
     case ext_diff_v2:
-      loc_a[0] = tape.loadNextForward<LocInfo>(); /* index */
-      loc_a[1] = tape.loadNextForward<LocInfo>(); /* iArr length */
+      loc_a[0] = evalCtx.loadNextForward<LocInfo>(); /* index */
+      loc_a[1] = evalCtx.loadNextForward<LocInfo>(); /* iArr length */
       for (size_t l = 0; l < loc_a[1]; ++l)
-        tape.loadNextForward<LocInfo>();          /* iArr */
-      tape.loadNextForward<LocInfo>();            /* iArr length again */
-      loc_a[1] = tape.loadNextForward<LocInfo>(); /* nin */
-      loc_a[2] = tape.loadNextForward<LocInfo>(); /* nout */
+        evalCtx.loadNextForward<LocInfo>();          /* iArr */
+      evalCtx.loadNextForward<LocInfo>();            /* iArr length again */
+      loc_a[1] = evalCtx.loadNextForward<LocInfo>(); /* nin */
+      loc_a[2] = evalCtx.loadNextForward<LocInfo>(); /* nout */
       for (size_t l = 0; l < loc_a[1]; ++l) {
-        tape.loadNextForward<LocInfo>();
-        tape.loadNextForward<LocInfo>();
+        evalCtx.loadNextForward<LocInfo>();
+        evalCtx.loadNextForward<LocInfo>();
       }
       /* input vectors sizes and start locs */
       for (size_t l = 0; l < loc_a[2]; ++l) {
-        tape.loadNextForward<LocInfo>();
-        tape.loadNextForward<LocInfo>();
+        evalCtx.loadNextForward<LocInfo>();
+        evalCtx.loadNextForward<LocInfo>();
       }
       /* output vectors sizes and start locs */
-      tape.loadNextForward<LocInfo>(); /* nin again */
-      tape.loadNextForward<LocInfo>(); /* nout again */
+      evalCtx.loadNextForward<LocInfo>(); /* nin again */
+      evalCtx.loadNextForward<LocInfo>(); /* nout again */
       filewrite(operation, "extern diff v2", 3, loc_a, 0, cst_d);
       break;
 #ifdef ADOLC_MEDIPACK_SUPPORT
       /*--------------------------------------------------------------------------*/
     case medi_call:
-      loc_a[0] = tape.loadNextForward<LocInfo>();
+      loc_a[0] = evalCtx.loadNextForward<LocInfo>();
 
       /* currently not supported */
       break;
 #endif
 #ifdef ADOLC_AMPI_SUPPORT
     case ampi_send:
-      loc_a[0] = tape.loadNextForward<LocInfo>(); /* start loc */
-      TAPE_AMPI_read_int(loc_a + 1);              /* count */
+      loc_a[0] = evalCtx.loadNextForward<LocInfo>(); /* start loc */
+      TAPE_AMPI_read_int(loc_a + 1);                 /* count */
       TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);
       TAPE_AMPI_read_int(loc_a + 2); /* endpoint */
       TAPE_AMPI_read_int(loc_a + 3); /* tag */
@@ -1344,8 +1348,8 @@ void tape_doc(short tnum,     /* tape id */
       break;
 
     case ampi_recv:
-      loc_a[0] = tape.loadNextForward<LocInfo>(); /* start loc */
-      TAPE_AMPI_read_int(loc_a + 1);              /* count */
+      loc_a[0] = evalCtx.loadNextForward<LocInfo>(); /* start loc */
+      TAPE_AMPI_read_int(loc_a + 1);                 /* count */
       TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);
       TAPE_AMPI_read_int(loc_a + 2); /* endpoint */
       TAPE_AMPI_read_int(loc_a + 3); /* tag */
@@ -1369,8 +1373,8 @@ void tape_doc(short tnum,     /* tape id */
     case ampi_wait:
       /* for the operation we had been waiting for */
       size = 0;
-      loc_a[size++] = tape.loadNextForward<LocInfo>(); /* start loc */
-      TAPE_AMPI_read_int(loc_a + size++);              /* count */
+      loc_a[size++] = evalCtx.loadNextForward<LocInfo>(); /* start loc */
+      TAPE_AMPI_read_int(loc_a + size++);                 /* count */
       TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);
       TAPE_AMPI_read_int(loc_a + size++); /* endpoint */
       TAPE_AMPI_read_int(loc_a + size++); /* tag */
@@ -1387,8 +1391,8 @@ void tape_doc(short tnum,     /* tape id */
       break;
 
     case ampi_bcast:
-      loc_a[0] = tape.loadNextForward<LocInfo>(); /* start loc */
-      TAPE_AMPI_read_int(loc_a + 1);              /* count */
+      loc_a[0] = evalCtx.loadNextForward<LocInfo>(); /* start loc */
+      TAPE_AMPI_read_int(loc_a + 1);                 /* count */
       TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);
       TAPE_AMPI_read_int(loc_a + 2); /* root */
       TAPE_AMPI_read_MPI_Comm(&anMPI_Comm);
@@ -1396,10 +1400,10 @@ void tape_doc(short tnum,     /* tape id */
       break;
 
     case ampi_reduce:
-      loc_a[0] = tape.loadNextForward<LocInfo>(); /* rbuf */
-      loc_a[1] = tape.loadNextForward<LocInfo>(); /* sbuf */
-      TAPE_AMPI_read_int(loc_a + 2);              /* count */
-      TAPE_AMPI_read_int(loc_a + 3);              /* pushResultData */
+      loc_a[0] = evalCtx.loadNextForward<LocInfo>(); /* rbuf */
+      loc_a[1] = evalCtx.loadNextForward<LocInfo>(); /* sbuf */
+      TAPE_AMPI_read_int(loc_a + 2);                 /* count */
+      TAPE_AMPI_read_int(loc_a + 3);                 /* pushResultData */
       i = 0; /* read stored double array into dummy variable */
       while (i < loc_a[2]) {
         TAPE_AMPI_read_double(&aDouble);
@@ -1422,10 +1426,10 @@ void tape_doc(short tnum,     /* tape id */
       break;
 
     case ampi_allreduce:
-      loc_a[0] = tape.loadNextForward<LocInfo>(); /* rbuf */
-      loc_a[1] = tape.loadNextForward<LocInfo>(); /* sbuf */
-      TAPE_AMPI_read_int(loc_a + 2);              /* count */
-      TAPE_AMPI_read_int(loc_a + 3);              /* pushResultData */
+      loc_a[0] = evalCtx.loadNextForward<LocInfo>(); /* rbuf */
+      loc_a[1] = evalCtx.loadNextForward<LocInfo>(); /* sbuf */
+      TAPE_AMPI_read_int(loc_a + 2);                 /* count */
+      TAPE_AMPI_read_int(loc_a + 3);                 /* pushResultData */
       i = 0; /* read off stored double array into dummy variable */
       while (i < loc_a[2]) {
         TAPE_AMPI_read_double(&aDouble);
@@ -1451,14 +1455,14 @@ void tape_doc(short tnum,     /* tape id */
       size = 0;
       TAPE_AMPI_read_int(loc_a + size++); /* commSizeForRootOrNull */
       if (*(loc_a + 0) > 0) {
-        loc_a[size++] = tape.loadNextForward<LocInfo>(); /* rbuf loc */
-        TAPE_AMPI_read_int(loc_a + size++);              /* rcnt */
-        TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);    /* rtype */
+        loc_a[size++] = evalCtx.loadNextForward<LocInfo>(); /* rbuf loc */
+        TAPE_AMPI_read_int(loc_a + size++);                 /* rcnt */
+        TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);       /* rtype */
       }
-      loc_a[size++] = tape.loadNextForward<LocInfo>(); /* buf loc */
-      TAPE_AMPI_read_int(loc_a + size++);              /* count */
-      TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);    /* type */
-      TAPE_AMPI_read_int(loc_a + size++);              /* root */
+      loc_a[size++] = evalCtx.loadNextForward<LocInfo>(); /* buf loc */
+      TAPE_AMPI_read_int(loc_a + size++);                 /* count */
+      TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);       /* type */
+      TAPE_AMPI_read_int(loc_a + size++);                 /* root */
       TAPE_AMPI_read_MPI_Comm(&anMPI_Comm);
       TAPE_AMPI_read_int(loc_a + 0); /* commSizeForRootOrNull */
       filewrite_ampi(operation, "ampi gather", size, loc_a);
@@ -1468,14 +1472,14 @@ void tape_doc(short tnum,     /* tape id */
       size = 0;
       TAPE_AMPI_read_int(loc_a + size++); /* commSizeForRootOrNull */
       if (*(loc_a + 0) > 0) {
-        loc_a[size++] = tape.loadNextForward<LocInfo>(); /* rbuf loc */
-        TAPE_AMPI_read_int(loc_a + size++);              /* rcnt */
-        TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);    /* rtype */
+        loc_a[size++] = evalCtx.loadNextForward<LocInfo>(); /* rbuf loc */
+        TAPE_AMPI_read_int(loc_a + size++);                 /* rcnt */
+        TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);       /* rtype */
       }
-      loc_a[size++] = tape.loadNextForward<LocInfo>(); /* buf loc */
-      TAPE_AMPI_read_int(loc_a + size++);              /* count */
-      TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);    /* type */
-      TAPE_AMPI_read_int(loc_a + size++);              /* root */
+      loc_a[size++] = evalCtx.loadNextForward<LocInfo>(); /* buf loc */
+      TAPE_AMPI_read_int(loc_a + size++);                 /* count */
+      TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);       /* type */
+      TAPE_AMPI_read_int(loc_a + size++);                 /* root */
       TAPE_AMPI_read_MPI_Comm(&anMPI_Comm);
       TAPE_AMPI_read_int(loc_a + 0); /* commSizeForRootOrNull */
       filewrite_ampi(operation, "ampi scatter", size, loc_a);
@@ -1484,9 +1488,9 @@ void tape_doc(short tnum,     /* tape id */
     case ampi_allgather:
       TAPE_AMPI_read_int(loc_a + 1); /* commSizeForRootOrNull */
       if (*(loc_a + 1) > 0) {
-        TAPE_AMPI_read_int(loc_a + 2);                /* rcnt */
-        loc_a[2] = tape.loadNextForward<LocInfo>();   /* rbuf loc */
-        TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype); /* rtype */
+        TAPE_AMPI_read_int(loc_a + 2);                 /* rcnt */
+        loc_a[2] = evalCtx.loadNextForward<LocInfo>(); /* rbuf loc */
+        TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);  /* rtype */
       }
       TAPE_AMPI_read_int(loc_a + 3);                /* count */
       TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype); /* type */
@@ -1499,9 +1503,9 @@ void tape_doc(short tnum,     /* tape id */
       size = 0;
       TAPE_AMPI_read_int(loc_a + size++); /* commSizeForRootOrNull */
       if (*(loc_a + 0) > 0) {
-        loc_a[size++] = tape.loadNextForward<LocInfo>(); /* rbuf loc */
-        TAPE_AMPI_read_int(loc_a + size++);              /* rcnt[0] */
-        TAPE_AMPI_read_int(loc_a + size++);              /* displs[0] */
+        loc_a[size++] = evalCtx.loadNextForward<LocInfo>(); /* rbuf loc */
+        TAPE_AMPI_read_int(loc_a + size++);                 /* rcnt[0] */
+        TAPE_AMPI_read_int(loc_a + size++);                 /* displs[0] */
       }
       for (size_t l = 1; l < *(loc_a + 0); ++l) {
         TAPE_AMPI_read_int(loc_a + size);
@@ -1510,10 +1514,10 @@ void tape_doc(short tnum,     /* tape id */
       if (*(loc_a + 0) > 0) {
         TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype); /* rtype */
       }
-      loc_a[size++] = tape.loadNextForward<LocInfo>(); /* buf loc */
-      TAPE_AMPI_read_int(loc_a + size++);              /* count */
-      TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);    /* type */
-      TAPE_AMPI_read_int(loc_a + size++);              /* root */
+      loc_a[size++] = evalCtx.loadNextForward<LocInfo>(); /* buf loc */
+      TAPE_AMPI_read_int(loc_a + size++);                 /* count */
+      TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);       /* type */
+      TAPE_AMPI_read_int(loc_a + size++);                 /* root */
       TAPE_AMPI_read_MPI_Comm(&anMPI_Comm);
       TAPE_AMPI_read_int(loc_a + 0); /* commSizeForRootOrNull */
       filewrite_ampi(operation, "ampi gatherv", size, loc_a);
@@ -1523,9 +1527,9 @@ void tape_doc(short tnum,     /* tape id */
       size = 0;
       TAPE_AMPI_read_int(loc_a + size++); /* commSizeForRootOrNull */
       if (*(loc_a + 0) > 0) {
-        loc_a[size++] = tape.loadNextForward<LocInfo>(); /* rbuf loc */
-        TAPE_AMPI_read_int(loc_a + size++);              /* rcnt[0] */
-        TAPE_AMPI_read_int(loc_a + size++);              /* displs[0] */
+        loc_a[size++] = evalCtx.loadNextForward<LocInfo>(); /* rbuf loc */
+        TAPE_AMPI_read_int(loc_a + size++);                 /* rcnt[0] */
+        TAPE_AMPI_read_int(loc_a + size++);                 /* displs[0] */
       }
       for (size_t l = 1; l < *(loc_a + 0); ++l) {
         TAPE_AMPI_read_int(loc_a + size);
@@ -1534,10 +1538,10 @@ void tape_doc(short tnum,     /* tape id */
       if (*(loc_a + 0) > 0) {
         TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype); /* rtype */
       }
-      loc_a[size++] = tape.loadNextForward<LocInfo>(); /* buf loc */
-      TAPE_AMPI_read_int(loc_a + size++);              /* count */
-      TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);    /* type */
-      TAPE_AMPI_read_int(loc_a + size++);              /* root */
+      loc_a[size++] = evalCtx.loadNextForward<LocInfo>(); /* buf loc */
+      TAPE_AMPI_read_int(loc_a + size++);                 /* count */
+      TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);       /* type */
+      TAPE_AMPI_read_int(loc_a + size++);                 /* root */
       TAPE_AMPI_read_MPI_Comm(&anMPI_Comm);
       TAPE_AMPI_read_int(loc_a + 0); /* commSizeForRootOrNull */
       filewrite_ampi(operation, "ampi scatterv", size, loc_a);
@@ -1552,13 +1556,13 @@ void tape_doc(short tnum,     /* tape id */
       }
       if (*(loc_a) > 0) {
         size += 2;
-        loc_a[size++] = tape.loadNextForward<LocInfo>(); /* rbuf loc */
-        TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);    /* rtype */
+        loc_a[size++] = evalCtx.loadNextForward<LocInfo>(); /* rbuf loc */
+        TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);       /* rtype */
       }
-      loc_a[size++] = tape.loadNextForward<LocInfo>(); /* buf loc */
-      TAPE_AMPI_read_int(loc_a + size++);              /* count */
-      TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);    /* type */
-      TAPE_AMPI_read_int(loc_a + size++);              /* root */
+      loc_a[size++] = evalCtx.loadNextForward<LocInfo>(); /* buf loc */
+      TAPE_AMPI_read_int(loc_a + size++);                 /* count */
+      TAPE_AMPI_read_MPI_Datatype(&anMPI_Datatype);       /* type */
+      TAPE_AMPI_read_int(loc_a + size++);                 /* root */
       TAPE_AMPI_read_MPI_Comm(&anMPI_Comm);
       TAPE_AMPI_read_int(loc_a); /* commSizeForRootOrNull */
       filewrite_ampi(operation, "ampi allgatherv", size, loc_a);
@@ -1574,7 +1578,7 @@ void tape_doc(short tnum,     /* tape id */
     } /* endswitch */
 
     /* Read the next operation */
-    operation = tape.loadNextForward<OpInfo>();
+    operation = evalCtx.loadNextForward<OpInfo>();
     ++op_cnt;
     --rev_op_cnt;
   } /* endwhile */
@@ -1587,7 +1591,7 @@ void tape_doc(short tnum,     /* tape id */
     free(dp_T0);
   dp_T0 = NULL;
 
-  tape.end_sweep();
+  tape.end_sweep(std::move(evalCtx));
 } /* end tape_doc */
 
 /****************************************************************************/

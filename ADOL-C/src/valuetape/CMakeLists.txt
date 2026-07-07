@@ -4,5 +4,6 @@ target_sources(adolc PRIVATE
                globaltapevarscl.cpp
                persistanttapeinfos.cpp
                taperecordingcontext.cpp
+               tapeevaluationcontext.cpp
               )
 

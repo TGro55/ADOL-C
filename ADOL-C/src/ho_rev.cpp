@@ -73,7 +73,8 @@ results   Taylor-Jacobians       ------------          Taylor Jacobians
 #define GET_TAYL(loc, depth, p)                                                \
   {                                                                            \
     UPDATE_TAYLORREAD(depth)                                                   \
-    tape.get_taylors(rpp_T[loc], depth);                                       \
+    evalCtx.get_taylors(rpp_T[loc], depth,                                     \
+                        tape.tapestats(TapeInfos::TAY_BUFFER_SIZE));           \
   }
 
 /*--------------------------------------------------------------------------*/
@@ -90,7 +91,8 @@ results   Taylor-Jacobians       ------------          Taylor Jacobians
 #define GET_TAYL(loc, depth, p)                                                \
   {                                                                            \
     UPDATE_TAYLORREAD(depth * p)                                               \
-    tape.get_taylors_p(rpp_T[loc], depth, p);                                         \
+    evalCtx.get_taylors_p(rpp_T[loc], depth, p,                                \
+                          tape.tapestats(TapeInfos::TAY_BUFFER_SIZE));         \
   }
 // clang-format on
 /*--------------------------------------------------------------------------*/
@@ -111,7 +113,8 @@ results   Taylor-Jacobians       ------------          Taylor Jacobians
 #define GET_TAYL(loc, depth, p)                                                \
   {                                                                            \
     UPDATE_TAYLORREAD(depth)                                                   \
-    tape.get_taylors(rpp_T[loc], depth);                                       \
+    evalCtx.get_taylors(rpp_T[loc], depth,                                     \
+                        tape.tapestats(TapeInfos::TAY_BUFFER_SIZE));           \
   }
 
 #else
@@ -210,6 +213,7 @@ results   Taylor-Jacobians       ------------          Taylor Jacobians
 #include <adolc/valuetape/valuetape.h>
 #include <cassert>
 #include <cmath>
+#include <utility>
 
 #if defined(ADOLC_DEBUG)
 #include <string.h>
@@ -301,9 +305,9 @@ int hov_ti_reverse(
 #endif
 
 {
-  using ValInfo = ADOLC::detail::ValInfo<RecordingContext, ErrorType>;
-  using LocInfo = ADOLC::detail::LocInfo<RecordingContext, ErrorType>;
-  using OpInfo = ADOLC::detail::OpInfo<RecordingContext, ErrorType>;
+  using ValInfo = ADOLC::detail::ValInfo<TapeEvaluationContext, ErrorType>;
+  using LocInfo = ADOLC::detail::LocInfo<TapeEvaluationContext, ErrorType>;
+  using OpInfo = ADOLC::detail::OpInfo<TapeEvaluationContext, ErrorType>;
   ValueTape &tape = findTape(tnum);
   /************************************************************************/
   /*                                                       ALL VARIABLES  */
@@ -406,7 +410,7 @@ int hov_ti_reverse(
   /* Set up stuff for the tape */
 
   /* Initialize the Reverse Sweep */
-  tape.init_sweep<ValueTape::Reverse>();
+  auto evalCtx = tape.init_sweep<ValueTape::Reverse>();
 
   if ((to_size_t(depen) != tape.tapestats(TapeInfos::NUM_DEPENDENTS)) ||
       (to_size_t(indep) != tape.tapestats(TapeInfos::NUM_INDEPENDENTS)))
@@ -456,7 +460,8 @@ int hov_ti_reverse(
 
   /************************************************************************/
   /*                                                TAYLOR INITIALIZATION */
-  tape.taylor_back();
+  evalCtx.taylor_back(tape.tapestats(TapeInfos::TAY_BUFFER_SIZE), tape.tapeId(),
+                      tape.tay_fileName());
 
   if (tape.deg_save() != degre)
     ADOLCError::fail(ADOLCError::ErrorType::REVERSE_NO_FOWARD, CURRENT_LOCATION,
@@ -480,7 +485,8 @@ int hov_ti_reverse(
 #define UPDATE_TAYLORREAD(X)
 #endif /* ADOLC_DEBUG */
 
-  operation = tape.loadNextReverse<OpInfo>();
+  operation =
+      evalCtx.loadNextReverse<OpInfo>(tape.tapestats(OpInfo::bufferSize));
 #if defined(ADOLC_DEBUG)
   ++countPerOperation[operation];
 #endif /* ADOLC_DEBUG */
@@ -494,26 +500,31 @@ int hov_ti_reverse(
 
       /*----------------------------------------------------------*/
     case end_of_op: /* end_of_op */
-      tape.loadBlockIntoBufferReverse<OpInfo>();
-      operation = tape.loadNextReverse<OpInfo>();
+      evalCtx.loadBlockIntoBufferReverse<OpInfo>(
+          tape.tapestats(OpInfo::bufferSize));
+      operation =
+          evalCtx.loadNextReverse<OpInfo>(tape.tapestats(OpInfo::bufferSize));
       /* Skip next operation, it's another end_of_op */
       break;
 
       /*----------------------------------------------------------*/
-    case end_of_int:                              /* end_of_int */
-      tape.loadBlockIntoBufferReverse<LocInfo>(); /* Get the next int block */
+    case end_of_int: /* end_of_int */
+      evalCtx.loadBlockIntoBufferReverse<LocInfo>(
+          tape.tapestats(LocInfo::bufferSize)); /* Get the next int block */
       break;
 
       /*----------------------------------------------------------*/
-    case end_of_val:                              /* end_of_val */
-      tape.loadBlockIntoBufferReverse<ValInfo>(); /* Get the next val block */
+    case end_of_val: /* end_of_val */
+      evalCtx.loadBlockIntoBufferReverse<ValInfo>(
+          tape.tapestats(ValInfo::bufferSize)); /* Get the next val block */
       break;
 
       /*----------------------------------------------------------*/
     case start_of_tape: /* start_of_tape */
       break;
     case end_of_tape: /* end_of_tape */
-      tape.discard_params_r();
+      evalCtx.discard_params_r(tape.tapestats(TapeInfos::VAL_BUFFER_SIZE),
+                               tape.tapestats(TapeInfos::NUM_PARAM));
       break;
 
       /************************************************************/
@@ -521,7 +532,8 @@ int hov_ti_reverse(
 
       /*----------------------------------------------------------*/
     case eq_zero: /* eq_zero */
-      arg = tape.loadNextReverse<LocInfo>();
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ret_c = 0;
       break;
@@ -530,13 +542,15 @@ int hov_ti_reverse(
     case neq_zero: /* neq_zero */
     case gt_zero:  /* gt_zero */
     case lt_zero:  /* lt_zero */
-      arg = tape.loadNextReverse<LocInfo>();
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
       break;
 
       /*----------------------------------------------------------*/
     case ge_zero: /* ge_zero */
     case le_zero: /* le_zero */
-      arg = tape.loadNextReverse<LocInfo>();
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       if (*rpp_T[arg] == 0)
         ret_c = 0;
@@ -548,8 +562,10 @@ int hov_ti_reverse(
       /*----------------------------------------------------------*/
     case assign_a: /* assign an adouble variable an    assign_a */
       /* adouble value. (=) */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Aarg, rpp_A[arg])
       ASSIGN_A(Ares, rpp_A[res])
@@ -574,8 +590,10 @@ int hov_ti_reverse(
       /*----------------------------------------------------------*/
     case assign_d: /* assign an adouble variable a    assign_d */
       /* double value. (=) */
-      res = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
 
@@ -586,9 +604,11 @@ int hov_ti_reverse(
 
     case assign_p: /* assign an adouble variable a    assign_d */
       /* double value. (=) */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.paramstore()[arg];
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval = evalCtx.paramstore[arg];
 
       ASSIGN_A(Ares, rpp_A[res])
 
@@ -600,7 +620,8 @@ int hov_ti_reverse(
       /*----------------------------------------------------------*/
     case assign_d_zero: /* assign an adouble a        assign_d_zero */
     case assign_d_one:  /* double value. (=)           assign_d_one */
-      res = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
 
@@ -612,7 +633,8 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case assign_ind: /* assign an adouble variable an    assign_ind */
       /* independent double value (<<=) */
-      res = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
 
@@ -633,7 +655,8 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case assign_dep: /* assign a float variable a    assign_dep */
       /* dependent adouble value. (>>=) */
-      res = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg, rpp_A[res]) /* just a helpful pointers */
@@ -659,8 +682,10 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case eq_plus_d: /* Add a floating point to an    eq_plus_d */
       /* adouble. (+=) */
-      res = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       GET_TAYL(res, k, p)
       break;
@@ -668,8 +693,10 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case eq_plus_a: /* Add an adouble to another    eq_plus_a */
       /* adouble. (+=) */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg, rpp_A[arg]);
@@ -692,8 +719,10 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case eq_min_d: /* Subtract a floating point from an    eq_min_d */
       /* adouble. (-=) */
-      res = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       GET_TAYL(res, k, p)
       break;
@@ -701,8 +730,10 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case eq_min_a: /* Subtract an adouble from another    eq_min_a */
       /* adouble. (-=) */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg, rpp_A[arg])
@@ -725,8 +756,10 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case eq_mult_d: /* Multiply an adouble by a    eq_mult_d */
       /* floating point. (*=) */
-      res = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
 
@@ -740,8 +773,10 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case eq_mult_a: /* Multiply one adouble by another    eq_mult_a */
       /* (*=) */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       GET_TAYL(res, k, p)
 
@@ -777,7 +812,8 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case incr_a: /* Increment an adouble    incr_a */
     case decr_a: /* Increment an adouble    decr_a */
-      res = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       GET_TAYL(res, k, p)
       break;
@@ -788,9 +824,12 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case plus_a_a: /* : Add two adoubles. (+)    plus a_a */
-      res = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg1, rpp_A[arg1])
@@ -821,9 +860,12 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case plus_d_a: /* Add an adouble and a double    plus_d_a */
       /* (+) */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg, rpp_A[arg])
@@ -850,9 +892,12 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case min_a_a: /* Subtraction of two adoubles    min_a_a */
       /* (-) */
-      res = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg1, rpp_A[arg1])
@@ -884,9 +929,12 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case min_d_a: /* Subtract an adouble from a    min_d_a */
       /* double (-) */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg, rpp_A[arg])
@@ -913,9 +961,12 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case mult_a_a: /* Multiply two adoubles (*)    mult_a_a */
       /* Obtain indices for result and argument variables. */
-      res = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       /* Read Taylor polynomial into rpp_T. */
       GET_TAYL(res, k, p)
@@ -983,9 +1034,12 @@ int hov_ti_reverse(
       /* olvo 991122: new op_code with recomputation */
     case eq_plus_prod: /* increment a product of           eq_plus_prod */
       /* two adoubles (*) */
-      res = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg2, rpp_A[arg2])
@@ -1032,9 +1086,12 @@ int hov_ti_reverse(
       /* olvo 991122: new op_code with recomputation */
     case eq_min_prod: /* decrement a product of             eq_min_prod */
       /* two adoubles (*) */
-      res = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg2, rpp_A[arg2])
@@ -1080,9 +1137,12 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case mult_d_a: /* Multiply an adouble by a double    mult_d_a */
       /* (*) */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg, rpp_A[arg])
@@ -1109,9 +1169,12 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case div_a_a: /* Divide an adouble by an adouble    div_a_a */
       /* (/) */
-      res = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg2, rpp_A[arg2])
@@ -1164,9 +1227,12 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case div_d_a: /* Division double - adouble (/)    div_d_a */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg, rpp_A[arg])
@@ -1216,8 +1282,10 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case pos_sign_a: /* pos_sign_a */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg, rpp_A[arg])
@@ -1243,8 +1311,10 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case neg_sign_a: /* neg_sign_a */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg, rpp_A[arg])
@@ -1274,8 +1344,10 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case exp_op: /* exponent operation    exp_op */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg, rpp_A[arg])
@@ -1306,9 +1378,12 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case sin_op: /* sine operation    sin_op */
-      res = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg1, rpp_A[arg1])
@@ -1340,9 +1415,12 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case cos_op: /* cosine operation    cos_op */
-      res = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg1, rpp_A[arg1])
@@ -1381,9 +1459,12 @@ int hov_ti_reverse(
     case atanh_op: /* atanh_op */
     case erf_op:   /* erf_op   */
     case erfc_op:  /* erfc_op  */
-      res = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       GET_TAYL(res, k, p)
 
@@ -1413,8 +1494,10 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case log_op: /* log_op */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       GET_TAYL(res, k, p)
 
@@ -1448,9 +1531,12 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case pow_op: /* pow_op */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       Targ = rpp_T[arg];
       Tres = rpp_T[res];
@@ -1544,8 +1630,10 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case sqrt_op: /* sqrt_op */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg, rpp_A[arg])
@@ -1578,8 +1666,10 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case cbrt_op: /* cbrt_op */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
       ADOLCError::fail(ADOLCError::ErrorType::HO_OP_NOT_IMPLEMENTED,
                        CURRENT_LOCATION,
                        ADOLCError::FailInfo{.info7 = operation});
@@ -1588,11 +1678,16 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case gen_quad: /* gen_quad */
-      res = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
       ASSIGN_A(Aarg1, rpp_A[arg1])
@@ -1622,10 +1717,14 @@ int hov_ti_reverse(
       /*--------------------------------------------------------------------------*/
     case min_op: /* min_op */
 
-      res = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       GET_TAYL(res, k, p)
 
@@ -1756,9 +1855,12 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case abs_val: /* abs_val */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
       /* must be changed for hos_ov, but how? */
       /* seems to influence the return value  */
       GET_TAYL(res, k, p)
@@ -1816,9 +1918,12 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case ceil_op: /* ceil_op */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       GET_TAYL(res, k, p)
 
@@ -1844,9 +1949,12 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case floor_op: /* floor_op */
-      res = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       GET_TAYL(res, k, p)
 
@@ -1877,11 +1985,16 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case cond_assign: /* cond_assign */
-      res = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       GET_TAYL(res, k, p)
 
@@ -1962,11 +2075,16 @@ int hov_ti_reverse(
       break;
 
     case cond_eq_assign: /* cond_eq_assign */
-      res = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       GET_TAYL(res, k, p)
 
@@ -2036,10 +2154,14 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case cond_assign_s: /* cond_assign_s */
-      res = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       GET_TAYL(res, k, p)
 
@@ -2084,10 +2206,14 @@ int hov_ti_reverse(
       }
       break;
     case cond_eq_assign_s: /* cond_eq_assign_s */
-      res = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       GET_TAYL(res, k, p)
 
@@ -2132,10 +2258,14 @@ int hov_ti_reverse(
     case ge_a_a:
     case lt_a_a:
     case gt_a_a:
-      res = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
       ASSIGN_A(Ares, rpp_A[res])
 
       FOR_0_LE_l_LT_pk1 ARES_INC = 0.0;
@@ -2146,13 +2276,17 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case subscript:
-      coval = tape.loadNextReverse<ValInfo>();
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
       {
         size_t idx, numval = (size_t)trunc(fabs(coval));
         locint vectorloc;
-        res = tape.loadNextReverse<LocInfo>();
-        vectorloc = tape.loadNextReverse<LocInfo>();
-        arg = tape.loadNextReverse<LocInfo>();
+        res = evalCtx.loadNextReverse<LocInfo>(
+            tape.tapestats(LocInfo::bufferSize));
+        vectorloc = evalCtx.loadNextReverse<LocInfo>(
+            tape.tapestats(LocInfo::bufferSize));
+        arg = evalCtx.loadNextReverse<LocInfo>(
+            tape.tapestats(LocInfo::bufferSize));
         Targ = rpp_T[arg];
         idx = (size_t)trunc(fabs(*Targ));
         if (idx >= numval)
@@ -2182,13 +2316,17 @@ int hov_ti_reverse(
       break;
 
     case subscript_ref:
-      coval = tape.loadNextReverse<ValInfo>();
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
       {
         size_t idx, numval = (size_t)trunc(fabs(coval));
         locint vectorloc;
-        res = tape.loadNextReverse<LocInfo>();
-        vectorloc = tape.loadNextReverse<LocInfo>();
-        arg = tape.loadNextReverse<LocInfo>();
+        res = evalCtx.loadNextReverse<LocInfo>(
+            tape.tapestats(LocInfo::bufferSize));
+        vectorloc = evalCtx.loadNextReverse<LocInfo>(
+            tape.tapestats(LocInfo::bufferSize));
+        arg = evalCtx.loadNextReverse<LocInfo>(
+            tape.tapestats(LocInfo::bufferSize));
         Targ = rpp_T[arg];
         Tres = rpp_T[res];
         idx = (size_t)trunc(fabs(*Targ));
@@ -2213,8 +2351,10 @@ int hov_ti_reverse(
       break;
 
     case ref_copyout:
-      res = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       Targ1 = rpp_T[arg1];
       arg = (size_t)trunc(fabs(*Targ1));
@@ -2240,7 +2380,8 @@ int hov_ti_reverse(
 
     case ref_incr_a: /* Increment an adouble    incr_a */
     case ref_decr_a: /* Increment an adouble    decr_a */
-      arg1 = tape.loadNextReverse<LocInfo>();
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       Targ1 = rpp_T[arg1];
       res = (size_t)trunc(fabs(*Targ1));
@@ -2250,11 +2391,13 @@ int hov_ti_reverse(
 
     case ref_assign_d: /* assign an adouble variable a    assign_d */
       /* double value. (=) */
-      coval = tape.loadNextReverse<ValInfo>();
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
       /* fallthrough */
     case ref_assign_d_zero: /* assign an adouble a        assign_d_zero */
     case ref_assign_d_one:  /* double value. (=)           assign_d_one */
-      arg1 = tape.loadNextReverse<LocInfo>();
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       Targ1 = rpp_T[arg1];
       res = (size_t)trunc(fabs(*Targ1));
@@ -2268,8 +2411,10 @@ int hov_ti_reverse(
 
     case ref_assign_a: /* assign an adouble variable an    assign_a */
       /* adouble value. (=) */
-      arg1 = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       Targ1 = rpp_T[arg1];
       res = (size_t)trunc(fabs(*Targ1));
@@ -2296,7 +2441,8 @@ int hov_ti_reverse(
 
     case ref_assign_ind: /* assign an adouble variable an    assign_ind */
       /* independent double value (<<=) */
-      arg1 = tape.loadNextReverse<LocInfo>();
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
       Targ1 = rpp_T[arg1];
       res = (size_t)trunc(fabs(*Targ1));
       ASSIGN_A(Ares, rpp_A[res])
@@ -2317,18 +2463,22 @@ int hov_ti_reverse(
 
     case ref_eq_plus_d: /* Add a floating point to an    eq_plus_d */
                         /* adouble. (+=) */
-      arg1 = tape.loadNextReverse<LocInfo>();
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
       Targ1 = rpp_T[arg1];
       res = (size_t)trunc(fabs(*Targ1));
-      coval = tape.loadNextReverse<ValInfo>();
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       GET_TAYL(res, k, p)
       break;
 
     case ref_eq_plus_a: /* Add an adouble to another    eq_plus_a */
       /* adouble. (+=) */
-      arg1 = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       Targ1 = rpp_T[arg1];
       res = (size_t)trunc(fabs(*Targ1));
@@ -2352,18 +2502,22 @@ int hov_ti_reverse(
 
     case ref_eq_min_d: /* Subtract a floating point from an    eq_min_d */
       /* adouble. (-=) */
-      arg1 = tape.loadNextReverse<LocInfo>();
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
       Targ1 = rpp_T[arg1];
       res = (size_t)trunc(fabs(*Targ1));
-      coval = tape.loadNextReverse<ValInfo>();
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       GET_TAYL(res, k, p)
       break;
 
     case ref_eq_min_a: /* Subtract an adouble from another    eq_min_a */
       /* adouble. (-=) */
-      arg1 = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       Targ1 = rpp_T[arg1];
       res = (size_t)trunc(fabs(*Targ1));
@@ -2387,10 +2541,12 @@ int hov_ti_reverse(
 
     case ref_eq_mult_d: /* Multiply an adouble by a    eq_mult_d */
       /* floating point. (*=) */
-      arg1 = tape.loadNextReverse<LocInfo>();
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
       Targ1 = rpp_T[arg1];
       res = (size_t)trunc(fabs(*Targ1));
-      coval = tape.loadNextReverse<ValInfo>();
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       ASSIGN_A(Ares, rpp_A[res])
 
@@ -2403,8 +2559,10 @@ int hov_ti_reverse(
 
     case ref_eq_mult_a: /* Multiply one adouble by another    eq_mult_a */
       /* (*=) */
-      arg1 = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
       Targ1 = rpp_T[arg1];
       res = (size_t)trunc(fabs(*Targ1));
 
@@ -2441,9 +2599,12 @@ int hov_ti_reverse(
 
     case vec_copy:
 
-      res = tape.loadNextReverse<LocInfo>();
-      size = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      size =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       for (locint qq = 0; qq < size; qq++) {
 
@@ -2470,10 +2631,14 @@ int hov_ti_reverse(
       break;
 
     case vec_dot:
-      res = tape.loadNextReverse<LocInfo>();
-      size = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      size =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
       for (locint qq = 0; qq < size; qq++) {
         ASSIGN_A(Ares, rpp_A[res])
         ASSIGN_A(Aarg2, rpp_A[arg2 + qq])
@@ -2509,11 +2674,16 @@ int hov_ti_reverse(
       break;
 
     case vec_axpy:
-      res = tape.loadNextReverse<LocInfo>();
-      size = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      size =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
       for (locint qq = 0; qq < size; qq++) {
         ASSIGN_A(Ares, rpp_A[res + qq])
         ASSIGN_A(Aarg, rpp_A[arg])
@@ -2554,11 +2724,16 @@ int hov_ti_reverse(
     case ref_cond_assign: /* cond_assign */
     {
       revreal *Tref;
-      locint ref = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      locint ref =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       Tref = rpp_T[ref];
 
@@ -2643,11 +2818,16 @@ int hov_ti_reverse(
     case ref_cond_eq_assign: /* cond_eq_assign */
     {
       revreal *Tref;
-      locint ref = tape.loadNextReverse<LocInfo>();
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      locint ref =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       Tref = rpp_T[ref];
 
@@ -2719,10 +2899,14 @@ int hov_ti_reverse(
     } break;
 
     case ref_cond_assign_s: /* cond_assign_s */
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       Targ2 = rpp_T[arg2];
       res = (size_t)trunc(fabs(*Targ2));
@@ -2771,10 +2955,14 @@ int hov_ti_reverse(
       break;
 
     case ref_cond_eq_assign_s: /* cond_eq_assign_s */
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
-      arg = tape.loadNextReverse<LocInfo>();
-      coval = tape.loadNextReverse<ValInfo>();
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      coval =
+          evalCtx.loadNextReverse<ValInfo>(tape.tapestats(ValInfo::bufferSize));
 
       Targ2 = rpp_T[arg2];
       res = (size_t)trunc(fabs(*Targ2));
@@ -2819,9 +3007,11 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case take_stock_op: /* take_stock_op */
-      res = tape.loadNextReverse<LocInfo>();
-      size = tape.loadNextReverse<LocInfo>();
-      tape.get_val_v_r(size);
+      res =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      size =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      evalCtx.get_val_v_r(size);
 
       res += size;
       for (size_t ls = size; ls > 0; ls--) {
@@ -2835,8 +3025,10 @@ int hov_ti_reverse(
 
       /*--------------------------------------------------------------------------*/
     case death_not: /* death_not */
-      arg2 = tape.loadNextReverse<LocInfo>();
-      arg1 = tape.loadNextReverse<LocInfo>();
+      arg2 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
+      arg1 =
+          evalCtx.loadNextReverse<LocInfo>(tape.tapestats(LocInfo::bufferSize));
 
       for (size_t j = arg1; j <= arg2; j++) {
         ASSIGN_A(Aarg1, rpp_A[j])
@@ -2861,9 +3053,12 @@ int hov_ti_reverse(
              "TODO: add nestedReverseEval accumulation semantics to ho_rev.cpp "
              "before supporting nested higher-order reverse passes.");
 
-      m = static_cast<int>(tape.loadNextReverse<LocInfo>());
-      n = static_cast<int>(tape.loadNextReverse<LocInfo>());
-      tape.ext_diff_fct_index(tape.loadNextReverse<LocInfo>());
+      m = static_cast<int>(evalCtx.loadNextReverse<LocInfo>(
+          tape.tapestats(LocInfo::bufferSize)));
+      n = static_cast<int>(evalCtx.loadNextReverse<LocInfo>(
+          tape.tapestats(LocInfo::bufferSize)));
+      tape.ext_diff_fct_index(evalCtx.loadNextReverse<LocInfo>(
+          tape.tapestats(LocInfo::bufferSize)));
       edfct = get_ext_diff_fct(tape.tapeId(), tape.ext_diff_fct_index());
       edfct->q = nrows;
       /* degree is not known when registering external functions,
@@ -2954,7 +3149,8 @@ int hov_ti_reverse(
     } /* endswitch */
 
     /* Get the next operation */
-    operation = tape.loadNextReverse<OpInfo>();
+    operation =
+        evalCtx.loadNextReverse<OpInfo>(tape.tapestats(OpInfo::bufferSize));
 #if defined(ADOLC_DEBUG)
     ++countPerOperation[operation];
 #endif /* ADOLC_DEBUG */
@@ -2982,7 +3178,7 @@ int hov_ti_reverse(
   myfree1_ulong(jj);
   myfree1(x);
 
-  tape.end_sweep();
+  tape.end_sweep(std::move(evalCtx));
 
   return ret_c;
 }

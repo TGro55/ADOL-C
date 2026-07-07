@@ -1,5 +1,3 @@
-#include "adolc/internal/usrparms.h"
-#include "adolc/valuetape/infotype.h"
 #define BOOST_TEST_DYN_LINK
 #include "../const.h"
 #include <adolc/adolc.h>
@@ -12,11 +10,18 @@ BOOST_AUTO_TEST_SUITE(Test_TapeInfos)
 
 using TestErrorType = ADOLCError::ErrorType;
 using TestRecordingContext = ADOLC::detail::TapeRecordingContext;
+using TestEvaluationContext = ADOLC::detail::TapeEvaluationContext;
 using TestOpInfo = ADOLC::detail::OpInfo<TestRecordingContext, TestErrorType>;
 using TestLocInfo = ADOLC::detail::LocInfo<TestRecordingContext, TestErrorType>;
 using TestValInfo = ADOLC::detail::ValInfo<TestRecordingContext, TestErrorType>;
 using TestTayInfo = ADOLC::detail::TayInfo<TestRecordingContext, TestErrorType>;
-using StatsArray = std::array<size_t, TestRecordingContext::STAT_SIZE>;
+using TestEvalLocInfo =
+    ADOLC::detail::LocInfo<TestEvaluationContext, TestErrorType>;
+using TestEvalOpInfo =
+    ADOLC::detail::OpInfo<TestEvaluationContext, TestErrorType>;
+using TestEvalTayInfo =
+    ADOLC::detail::TayInfo<TestEvaluationContext, TestErrorType>;
+using StatsArray = std::array<size_t, TapeInfos::STAT_SIZE>;
 
 static_assert(ADOLC::detail::BufferStateType<ADOLC::detail::OpBuffer,
                                              typename TestOpInfo::value_type>);
@@ -91,7 +96,6 @@ BOOST_AUTO_TEST_CASE(TestRecordingContextMoveTransfersBuffersAndSignature) {
   ctx.deg_save = 1;
   ctx.tay_numInds = 3;
   ctx.tay_numDeps = 5;
-  ctx.ext_diff_fct_index = 5;
   ctx.nestedReverseEval = true;
   ctx.numSwitches = 6;
 
@@ -113,7 +117,6 @@ BOOST_AUTO_TEST_CASE(TestRecordingContextMoveTransfersBuffersAndSignature) {
   BOOST_CHECK_EQUAL(ctx2.deg_save, 1);
   BOOST_CHECK_EQUAL(ctx2.tay_numInds, 3);
   BOOST_CHECK_EQUAL(ctx2.tay_numDeps, 5);
-  BOOST_CHECK_EQUAL(ctx2.ext_diff_fct_index, 5);
   BOOST_CHECK_EQUAL(ctx2.nestedReverseEval, true);
   BOOST_CHECK_EQUAL(ctx2.numSwitches, 6);
 
@@ -183,11 +186,13 @@ BOOST_AUTO_TEST_CASE(TestOpInfoUpdateBufferPositionReverseUsesBlockSize) {
 }
 
 BOOST_AUTO_TEST_CASE(TestOpInfoPrepareForwardPosition) {
-  TestRecordingContext ctx;
+  TestRecordingContext recordCtx;
+  TestEvaluationContext ctx(recordCtx);
   StatsArray stats{};
   ctx.opBuffer_ = ADOLC::detail::OpBuffer(new unsigned char[8]{}, 8);
 
-  TestOpInfo::prepareForwardPosition(ctx, stats[TestOpInfo::bufferSize]);
+  TestEvalOpInfo::prepareForwardPosition(ctx,
+                                         stats[TestEvalOpInfo::bufferSize]);
 
   BOOST_CHECK_EQUAL(ctx.opBuffer_.position(), 0);
 }
@@ -217,16 +222,18 @@ BOOST_AUTO_TEST_CASE(TestLocInfoPrepareForwardPositionHonorsStatSpace) {
       tapeData.size());
   std::fclose(file);
 
-  TestRecordingContext ctx;
+  TestRecordingContext recordCtx;
+  TestEvaluationContext ctx(recordCtx);
   StatsArray stats{};
-  stats[TestRecordingContext::LOC_BUFFER_SIZE] = 10;
+  stats[TapeInfos::LOC_BUFFER_SIZE] = 10;
   ctx.locBuffer_ = ADOLC::detail::LocBuffer(new size_t[10]{}, 10);
   ctx.locBuffer_.openFile(fileName, "rb");
   std::fseek(ctx.locBuffer_.file(), static_cast<long>(10 * sizeof(size_t)),
              SEEK_SET);
   ctx.locBuffer_.numOnTape(40);
 
-  TestLocInfo::prepareForwardPosition(ctx, stats[TestLocInfo::bufferSize]);
+  TestEvalLocInfo::prepareForwardPosition(ctx,
+                                          stats[TestEvalLocInfo::bufferSize]);
 
   BOOST_CHECK_EQUAL(ctx.locBuffer_.position(), 2);
   BOOST_CHECK_EQUAL(ctx.locBuffer_.numOnTape(), 0);
@@ -274,9 +281,10 @@ BOOST_AUTO_TEST_CASE(TestTayInfoEnsureReverseReadableLoadsBoundaryBlock) {
       tapeData.size());
   std::fclose(file);
 
-  TestRecordingContext ctx;
+  TestRecordingContext recordCtx;
+  TestEvaluationContext ctx(recordCtx);
   StatsArray stats{};
-  stats[TestRecordingContext::TAY_BUFFER_SIZE] = 2;
+  stats[TapeInfos::TAY_BUFFER_SIZE] = 2;
   ctx.tayBuffer_ = ADOLC::detail::TayBuffer(new double[2]{0.0, 0.0}, 2);
   ctx.tayBuffer_.openFile(fileName, "rb");
   ctx.tayBuffer_.position(0);
@@ -284,7 +292,7 @@ BOOST_AUTO_TEST_CASE(TestTayInfoEnsureReverseReadableLoadsBoundaryBlock) {
   ctx.lastTayBlockInCore = 0;
 
   const double value =
-      ctx.loadNextReverse<TestTayInfo>(stats[TestTayInfo::bufferSize]);
+      ctx.loadNextReverse<TestEvalTayInfo>(stats[TestEvalTayInfo::bufferSize]);
 
   BOOST_CHECK_EQUAL(value, 4.0);
   BOOST_CHECK_EQUAL(ctx.tayBuffer_.position(), 1);
