@@ -25,6 +25,7 @@
 #include <iostream>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <vector>
 
 #ifdef ADOLC_MEDIPACK_SUPPORT
@@ -43,6 +44,10 @@ int trace_on(short tapeId, int keepTaylors) {
   currentTapeStack().push(currentTapePtr());
   setCurrentTape(tapeId);
 
+  if (tape.writeLock.has_value()) {
+    throw std::runtime_error("Shouldnt happen!");
+  }
+  tape.writeLock.emplace(tape.mutex_);
   int retval = tape.initNewTape();
 #ifdef ADOLC_MEDIPACK_SUPPORT
   tape.mediInitTape(tapeId);
@@ -68,6 +73,10 @@ int trace_on(short tapeId, int keepTaylors, size_t obs, size_t lbs, size_t vbs,
   currentTapeStack().push(currentTapePtr());
   setCurrentTape(tapeId);
 
+  if (tape.writeLock.has_value()) {
+    throw std::runtime_error("Shouldnt happen!");
+  }
+  tape.writeLock.emplace(tape.mutex_);
   int retval = tape.initNewTape();
   if (retval) {
 #ifdef ADOLC_MEDIPACK_SUPPORT
@@ -96,14 +105,15 @@ void trace_off(int flag) {
   using ADOLCError::ErrorType::TAPING_NOT_ACTUALLY_TAPING;
 
   ValueTape &tape = currentTape();
-  if (tape.workMode() != TapeInfos::WRITE_ACCESS) {
-    fail(TAPING_NOT_ACTUALLY_TAPING, CURRENT_LOCATION,
-         FailInfo{.info1 = tape.tapeId()});
+
+  if (!tape.writeLock.has_value()) {
+    throw std::runtime_error("Should not happen!");
   }
+  tape.writeLock.reset();
+
   tape.keepTape(flag);
   tape.keep_stock(); /* copy remaining live variables + trace_flag = 0 */
   tape.stop_trace(flag);
-  tape.workMode(TapeInfos::NO_MODE);
 
   // restore previous tapeId and delete it
   setCurrentTape(currentTapeStack().top());

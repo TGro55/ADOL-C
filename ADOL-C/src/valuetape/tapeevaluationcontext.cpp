@@ -1,5 +1,6 @@
 
 #include <adolc/valuetape/tapeevaluationcontext.h>
+#include <span>
 
 namespace ADOLC::detail {
 

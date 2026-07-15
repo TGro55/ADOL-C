@@ -37,9 +37,6 @@ struct TapeInfos {
     NUM_PARAM, /* no of parameters (doubles) interchangeable without retaping */
     STAT_SIZE  /* represents the size of the stats vector */
   };
-  // modes for the tape evaluation; set by functions like "fos_forward"
-  enum WORKMODES { NO_MODE, WRITE_ACCESS, READ_ACCESS };
-
   // storage order used by the tape I/O layer
   enum FILES { OPERATIONS_FILE, LOCATIONS_FILE, VALUES_FILE, TAYLORS_FILE };
 
@@ -75,8 +72,7 @@ struct TapeInfos {
   TapeInfos(TapeInfos &&other) noexcept
       : stats(other.stats), fileNames(other.fileNames),
         tapeBaseNames_(std::move(other.tapeBaseNames_)), tapeId_(other.tapeId_),
-        workMode(other.workMode), keepTape(other.keepTape),
-        skipFileCleanup(other.skipFileCleanup) {
+        keepTape(other.keepTape), skipFileCleanup(other.skipFileCleanup) {
     other.fileNames.fill(nullptr);
   }
   TapeInfos &operator=(TapeInfos &&other) noexcept {
@@ -88,7 +84,6 @@ struct TapeInfos {
       tapeBaseNames_ = std::move(other.tapeBaseNames_);
       fileNames = std::move(other.fileNames);
       tapeId_ = other.tapeId_;
-      workMode = other.workMode;
       keepTape = other.keepTape;
       skipFileCleanup = other.skipFileCleanup;
       other.fileNames.fill(nullptr);
@@ -101,7 +96,6 @@ struct TapeInfos {
   // the base names of every tape type
   std::array<std::string, 4> tapeBaseNames_;
   short tapeId_{-1};
-  WORKMODES workMode{NO_MODE};
 
   constexpr static size_t maxLocsPerOp{10}; // used in tape_loc_...
 

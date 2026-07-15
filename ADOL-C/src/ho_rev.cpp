@@ -213,6 +213,7 @@ results   Taylor-Jacobians       ------------          Taylor Jacobians
 #include <adolc/valuetape/valuetape.h>
 #include <cassert>
 #include <cmath>
+#include <shared_mutex>
 #include <utility>
 
 #if defined(ADOLC_DEBUG)
@@ -405,6 +406,8 @@ int hov_ti_reverse(
 
   /************************************************************************/
   /*                                                                INITs */
+
+  std::shared_lock lock(tape.mutex_);
 
   /*----------------------------------------------------------------------*/
   /* Set up stuff for the tape */

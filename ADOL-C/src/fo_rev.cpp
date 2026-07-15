@@ -196,7 +196,7 @@ results   Taylor-Jacobians       ------------          Taylor Jacobians
 #include <adolc/tape_interface.h>
 #include <adolc/valuetape/infotype.h>
 #include <adolc/valuetape/valuetape.h>
-#include <utility>
+#include <shared_mutex>
 
 #ifdef ADOLC_MEDIPACK_SUPPORT
 #include <adolc/medipacksupport_p.h>
@@ -446,6 +446,8 @@ int int_reverse_safe(
 
   /****************************************************************************/
   /*                                                                    INITs */
+
+  std::shared_lock lock(tape.mutex_);
 
   /*------------------------------------------------------------------------*/
   /* Set up stuff for the tape */

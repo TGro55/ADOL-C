@@ -20,8 +20,10 @@
 #include <cstdio>
 #include <limits>
 #include <memory>
+#include <shared_mutex>
 #include <span>
 #include <stack>
+#include <stdexcept>
 #include <type_traits>
 
 // just ignore the missing DLL interface of the class members....
@@ -90,6 +92,8 @@ class ADOLC_API ValueTape {
 #endif
 
 public:
+  std::shared_mutex mutex_;
+  std::optional<std::unique_lock<std::shared_mutex>> writeLock;
   ~ValueTape();
 
   // a tape always need a tapeId,
@@ -251,9 +255,6 @@ public:
 
   size_t numparam() const { return globalTapeVars_.numparam; }
 
-  void workMode(TapeInfos::WORKMODES mode) { tapeInfos_.workMode = mode; }
-  TapeInfos::WORKMODES workMode() const { return tapeInfos_.workMode; }
-
   void increment_numTays_Tape() {
     recordCtx_.tayBuffer_.numOnTape(recordCtx_.tayBuffer_.numOnTape() + 1);
   }
@@ -388,7 +389,7 @@ public:
     globalTapeVars_.branchSwitchWarning = 0;
   }
   void enableMinMaxUsingAbs() {
-    if (workMode() != TapeInfos::READ_ACCESS)
+    if (!writeLock.has_value())
       globalTapeVars_.nominmaxFlag = 1;
     else
       ADOLCError::fail(ADOLCError::ErrorType::ENABLE_MINMAX_USING_ABS,
@@ -396,7 +397,7 @@ public:
   }
 
   void disableMinMaxUsingAbs() {
-    if (workMode() != TapeInfos::READ_ACCESS)
+    if (!writeLock.has_value())
       globalTapeVars_.nominmaxFlag = 0;
     else
       ADOLCError::fail(ADOLCError::ErrorType::DISABLE_MINMAX_USING_ABS,
@@ -690,7 +691,6 @@ public:
         static_assert(!std::is_same_v<Mode, Mode>, "Mode not implemented!");
       }
     } catch (...) {
-      workMode(TapeInfos::NO_MODE);
       throw;
     }
   }

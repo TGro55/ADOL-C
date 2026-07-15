@@ -50,13 +50,11 @@ BOOST_AUTO_TEST_CASE(TestConstructorTapeId) {
 BOOST_AUTO_TEST_CASE(TestTapeInfosMoveKeepsMetadataOnly) {
   TapeInfos tp(3);
   tp.stats[2] = 5;
-  tp.workMode = TapeInfos::READ_ACCESS;
 
   TapeInfos tp2(std::move(tp));
 
   BOOST_CHECK_EQUAL(tp2.tapeId_, 3);
   BOOST_CHECK_EQUAL(tp2.stats[2], 5);
-  BOOST_CHECK_EQUAL(tp2.workMode, TapeInfos::READ_ACCESS);
 }
 
 BOOST_AUTO_TEST_CASE(TestRecordingContextMoveTransfersBuffersAndSignature) {

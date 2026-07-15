@@ -40,6 +40,8 @@ and _NTIGHT__
 #include <adolc/valuetape/infotype.h>
 #include <adolc/valuetape/valuetape.h>
 #include <math.h>
+#include <mutex>
+#include <shared_mutex>
 #include <string.h>
 #include <utility>
 
@@ -1095,8 +1097,17 @@ int hov_forward(
 
   /****************************************************************************/
   /*                                                                    INITs */
-
-  /* Set up stuff for the tape */
+#if defined _KEEP_
+  using Lock = std::variant<std::shared_lock<std::shared_mutex>,
+                            std::unique_lock<std::shared_mutex>>;
+  Lock lock =
+      keep ? Lock{std::in_place_type<std::unique_lock<std::shared_mutex>>,
+                  tape.mutex_}
+           : Lock{std::in_place_type<std::shared_lock<std::shared_mutex>>,
+                  tape.mutex_};
+#else
+  std::shared_lock lock(tape.mutex_);
+#endif // _KEEP_
 
   /* Initialize the Forward Sweep */
   auto evalCtx = tape.init_sweep<ValueTape::Forward>();

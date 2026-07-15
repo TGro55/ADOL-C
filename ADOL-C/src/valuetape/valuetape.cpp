@@ -10,12 +10,15 @@
 #include <cassert>
 #include <cstddef>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <sys/stat.h> // used in readconfigFile
 #include <utility>
 
 using ADOLC::detail::TapeEvaluationContext;
 ValueTape::~ValueTape() {
+  assert(!writeLock.has_value() &&
+         "Tape is desctructed before worMode is NO_MODE!");
   // ensure that we dont delete the valuetape before all adouble or pdouble are
   // deleted!
   assert(numLives() == 0 &&
@@ -60,18 +63,13 @@ int ValueTape::initNewTape() {
   using ADOLCError::FailInfo;
   using ADOLCError::ErrorType::TAPING_TAPE_STILL_IN_USE;
 
-  if (workMode() != TapeInfos::NO_MODE) {
-    fail(TAPING_TAPE_STILL_IN_USE, CURRENT_LOCATION,
-         FailInfo{.info1 = tapeId()});
-  }
   if (recordCtx_.tayBuffer_.file() != nullptr)
     rewind(recordCtx_.tayBuffer_.file());
 
   // creates new tapeInfos object with old buffers
   // thus, we dont allocate the buffers again if they are already existent
   initTapeInfos_keep();
-  // must be after initTapeInfos_keep, to not get overwritten!
-  workMode(TapeInfos::WRITE_ACCESS);
+
 #ifdef ADOLC_SPARSE
   initSparse();
 #endif
@@ -86,21 +84,11 @@ int ValueTape::initNewTape() {
 }
 
 void ValueTape::openTape() {
-  using ADOLCError::fail;
-  using ADOLCError::FailInfo;
-  using ADOLCError::ErrorType::TAPING_TAPE_STILL_IN_USE;
-  // check if we are currently writing to the tape, which is not allowed when we
-  // want to read.
-  if (workMode() == TapeInfos::WRITE_ACCESS) {
-    fail(TAPING_TAPE_STILL_IN_USE, CURRENT_LOCATION,
-         FailInfo{.info1 = tapeId()});
-  } else if (keepTaylors() == 0 && tapestats(TapeInfos::OP_FILE_ACCESS) == 1 &&
-             tapestats(TapeInfos::LOC_FILE_ACCESS) == 1 &&
-             tapestats(TapeInfos::VAL_FILE_ACCESS) == 1) {
+  if (keepTaylors() == 0 && tapestats(TapeInfos::OP_FILE_ACCESS) == 1 &&
+      tapestats(TapeInfos::LOC_FILE_ACCESS) == 1 &&
+      tapestats(TapeInfos::VAL_FILE_ACCESS) == 1) {
     read_tape_stats();
   }
-  // must be after initTapeInfos_keep, to not get overwritten!
-  workMode(TapeInfos::READ_ACCESS);
 }
 
 /* record all existing adoubles on the tape
@@ -464,21 +452,17 @@ void ValueTape::setParamVec(std::span<const double> paramvec) {
   using ADOLCError::ErrorType::PARAM_COUNTS_MISMATCH;
   using ADOLCError::ErrorType::TAPING_TAPE_STILL_IN_USE;
 
-  const auto oldMode = workMode();
-  if (oldMode == TapeInfos::WRITE_ACCESS) {
-    fail(ADOLCError::ErrorType::TAPING_TAPE_STILL_IN_USE, CURRENT_LOCATION,
-         FailInfo{.info1 = tapeId()});
-  }
-
   if (tapestats(TapeInfos::NUM_PARAM) != paramvec.size()) {
-    workMode(oldMode);
     fail(PARAM_COUNTS_MISMATCH, CURRENT_LOCATION,
          FailInfo{.info1 = tapeId(),
                   .info5 = paramvec.size(),
                   .info6 = tapeInfos_.stats[TapeInfos::NUM_PARAM]});
   }
 
-  workMode(TapeInfos::WRITE_ACCESS);
+  if (writeLock.has_value()) {
+    throw std::runtime_error("Should not happen!");
+  }
+  writeLock.emplace(mutex_);
 
   if (!recordCtx_.paramstore)
     recordCtx_.paramstore = new double[tapestats(TapeInfos::NUM_PARAM)];
@@ -489,7 +473,7 @@ void ValueTape::setParamVec(std::span<const double> paramvec) {
     paramstore_view[i] = paramvec[i];
 
   deg_save(-1);
-  workMode(oldMode);
+  writeLock.reset();
 }
 
 /**
@@ -552,7 +536,6 @@ void ValueTape::end_sweep(TapeEvaluationContext &&evalCtx) {
   evalCtx.closeSweepFiles();
   recordCtx_ = TapeRecordingContext();
   evalCtx.releaseTo(recordCtx_);
-  workMode(TapeInfos::NO_MODE);
 }
 
 // the following macros are used in readConfigFile()
