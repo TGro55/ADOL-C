@@ -1,6 +1,7 @@
 #ifndef ADOLC_TAPE_EVALUATION_CONTEXT_H
 #define ADOLC_TAPE_EVALUATION_CONTEXT_H
 
+#include <adolc/valuetape/tapeinfos.h>
 #include <adolc/valuetape/taperecordingcontext.h>
 #include <algorithm>
 #include <cstddef>
@@ -41,21 +42,27 @@ struct TapeEvaluationContext {
 
   TapeEvaluationContext() = delete;
 
-  explicit TapeEvaluationContext(TapeRecordingContext &tapeCtx)
-      : opBuffer_(std::move(tapeCtx.opBuffer_)),
-        valBuffer_(std::move(tapeCtx.valBuffer_)),
-        locBuffer_(std::move(tapeCtx.locBuffer_)),
-        tayBuffer_(std::move(tapeCtx.tayBuffer_)), numInds(tapeCtx.numInds),
-        numDeps(tapeCtx.numDeps), keepTaylors(tapeCtx.keepTaylors),
-        num_eq_prod(tapeCtx.num_eq_prod), deg_save(tapeCtx.deg_save),
-        tay_numInds(tapeCtx.tay_numInds), tay_numDeps(tapeCtx.tay_numDeps),
-        numSwitches(tapeCtx.numSwitches),
+  explicit TapeEvaluationContext(const TapeRecordingContext &tapeCtx,
+                                 TapeInfos::StatArray stats)
+      : opBuffer_(tapeCtx.opBuffer_), valBuffer_(tapeCtx.valBuffer_),
+        locBuffer_(tapeCtx.locBuffer_), tayBuffer_(tapeCtx.tayBuffer_),
+        numInds(tapeCtx.numInds), numDeps(tapeCtx.numDeps),
+        keepTaylors(tapeCtx.keepTaylors), num_eq_prod(tapeCtx.num_eq_prod),
+        deg_save(tapeCtx.deg_save), tay_numInds(tapeCtx.tay_numInds),
+        tay_numDeps(tapeCtx.tay_numDeps), numSwitches(tapeCtx.numSwitches),
         nestedReverseEval(tapeCtx.nestedReverseEval),
         nextBufferNumber(tapeCtx.nextBufferNumber),
-        lastTayBlockInCore(tapeCtx.lastTayBlockInCore),
-        signature(std::exchange(tapeCtx.signature, nullptr)),
-        paramstore(std::exchange(tapeCtx.paramstore, nullptr)),
-        originCtx_(&tapeCtx) {}
+        lastTayBlockInCore(tapeCtx.lastTayBlockInCore) {
+
+    if (tapeCtx.signature != nullptr) {
+      signature = new double[stats[TapeInfos::NUM_SWITCHES]];
+      std::copy_n(tapeCtx.signature, stats[TapeInfos::NUM_SWITCHES], signature);
+    }
+    if (tapeCtx.paramstore != nullptr) {
+      paramstore = new double[stats[TapeInfos::NUM_PARAM]];
+      std::copy_n(tapeCtx.paramstore, stats[TapeInfos::NUM_PARAM], paramstore);
+    }
+  }
 
   TapeEvaluationContext(const TapeEvaluationContext &) = delete;
   TapeEvaluationContext &operator=(const TapeEvaluationContext &) = delete;

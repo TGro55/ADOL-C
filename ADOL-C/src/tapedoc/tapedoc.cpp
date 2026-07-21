@@ -24,6 +24,7 @@
 #include <adolc/valuetape/infotype.h>
 #include <adolc/valuetape/valuetape.h>
 #include <math.h>
+#include <shared_mutex>
 #include <string.h>
 #include <utility>
 
@@ -271,6 +272,8 @@ void tape_doc(short tnum,     /* tape id */
   int i;
   double aDouble;
 #endif
+
+  std::shared_lock lock(tape.accessMutex());
   auto evalCtx = tape.init_sweep<ValueTape::Forward>();
   tag = tnum;
 
@@ -1591,7 +1594,7 @@ void tape_doc(short tnum,     /* tape id */
     free(dp_T0);
   dp_T0 = NULL;
 
-  tape.end_sweep(std::move(evalCtx));
+  tape.end_sweep(evalCtx);
 } /* end tape_doc */
 
 /****************************************************************************/

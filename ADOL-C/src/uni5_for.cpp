@@ -1102,11 +1102,11 @@ int hov_forward(
                             std::unique_lock<std::shared_mutex>>;
   Lock lock =
       keep ? Lock{std::in_place_type<std::unique_lock<std::shared_mutex>>,
-                  tape.mutex_}
+                  tape.accessMutex()}
            : Lock{std::in_place_type<std::shared_lock<std::shared_mutex>>,
-                  tape.mutex_};
+                  tape.accessMutex()};
 #else
-  std::shared_lock lock(tape.mutex_);
+  std::shared_lock lock(tape.accessMutex());
 #endif // _KEEP_
 
   /* Initialize the Forward Sweep */
@@ -3669,16 +3669,6 @@ int hov_forward(
       res = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
-      if (evalCtx.loadNextForward<ValInfo>() != dp_T0[arg1]) {
-        fprintf(DIAG_OUT,
-                "ADOL-C Warning: forward sweep aborted; tape invalid!\n");
-        IF_KEEP_TAYLOR_CLOSE
-        tape.end_sweep(std::move(evalCtx));
-        return -2;
-      }
-#endif /* !_NTIGHT_ */
-
-#if !defined(_NTIGHT_)
       coval =
 #endif
           evalCtx.loadNextForward<ValInfo>();
@@ -3689,12 +3679,7 @@ int hov_forward(
       dp_T0[res] = coval;
 #endif /* !_NTIGHT_ */
 
-#if defined(_INDO_)
-      fprintf(DIAG_OUT, "ADOL-C Warning: forward sweep aborted; sparse mode "
-                        "not available for gen_quad!\n");
-      tape.end_sweep(std::move(evalCtx));
-      return -2;
-#else
+#if !defined(_INDO_)
 #if !defined(_ZOS_) /* BREAK_ZOS */
       ASSIGN_T(Tres, TAYLOR_BUFFER[res])
       ASSIGN_T(Targ1, TAYLOR_BUFFER[arg1])
@@ -5880,8 +5865,17 @@ int hov_forward(
   myfree1(dp_z);
 #endif
 
-  tape.end_sweep(std::move(evalCtx));
-
+#if defined(_KEEP_)
+  if (keep) {
+    tape.end_sweep(
+        std::move(evalCtx),
+        std::move(std::get<std::unique_lock<std::shared_mutex>>(lock)));
+  } else {
+    tape.end_sweep(evalCtx);
+  }
+#else
+  tape.end_sweep(evalCtx);
+#endif // _KEEP_
 #if defined(_INDO_)
 #if defined(_INDOPRO_)
   for (size_t i = 0; i < max_ind_dom; i++) {

@@ -5,6 +5,7 @@ install(FILES
         tapeinfos.h
         valuetape.h
         sparseinfos.h
+        taperegistry.h
         tapeevaluationcontext.h
         tapeinfos.h
         persistanttapeinfos.h

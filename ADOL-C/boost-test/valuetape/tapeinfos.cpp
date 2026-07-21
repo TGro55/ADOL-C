@@ -185,8 +185,8 @@ BOOST_AUTO_TEST_CASE(TestOpInfoUpdateBufferPositionReverseUsesBlockSize) {
 
 BOOST_AUTO_TEST_CASE(TestOpInfoPrepareForwardPosition) {
   TestRecordingContext recordCtx;
-  TestEvaluationContext ctx(recordCtx);
   StatsArray stats{};
+  TestEvaluationContext ctx(recordCtx, stats);
   ctx.opBuffer_ = ADOLC::detail::OpBuffer(new unsigned char[8]{}, 8);
 
   TestEvalOpInfo::prepareForwardPosition(ctx,
@@ -221,8 +221,9 @@ BOOST_AUTO_TEST_CASE(TestLocInfoPrepareForwardPositionHonorsStatSpace) {
   std::fclose(file);
 
   TestRecordingContext recordCtx;
-  TestEvaluationContext ctx(recordCtx);
   StatsArray stats{};
+  TestEvaluationContext ctx(recordCtx, stats);
+
   stats[TapeInfos::LOC_BUFFER_SIZE] = 10;
   ctx.locBuffer_ = ADOLC::detail::LocBuffer(new size_t[10]{}, 10);
   ctx.locBuffer_.openFile(fileName, "rb");
@@ -280,8 +281,8 @@ BOOST_AUTO_TEST_CASE(TestTayInfoEnsureReverseReadableLoadsBoundaryBlock) {
   std::fclose(file);
 
   TestRecordingContext recordCtx;
-  TestEvaluationContext ctx(recordCtx);
   StatsArray stats{};
+  TestEvaluationContext ctx(recordCtx, stats);
   stats[TapeInfos::TAY_BUFFER_SIZE] = 2;
   ctx.tayBuffer_ = ADOLC::detail::TayBuffer(new double[2]{0.0, 0.0}, 2);
   ctx.tayBuffer_.openFile(fileName, "rb");

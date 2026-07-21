@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <concepts>
 #include <cstddef>
@@ -71,23 +72,21 @@ template <typename T> class BufferState {
   size_t capacity_{0};
   size_t numOnTape_{0};
 
-public:
-  /// Deletes the owned buffer and closes the owned file handle, if present.
-  ~BufferState() { delete[] buffer_; }
+  void copyBuffer(const BufferState &other) {
+    if (other.buffer_ != nullptr) {
+      delete[] buffer_;
+      buffer_ = new T[other.capacity_];
+      std::copy_n(other.buffer_, other.capacity_, buffer_);
+    }
+    currentPos_ = other.currentPos_;
+    capacity_ = other.capacity_;
+    numOnTape_ = other.numOnTape_;
+  }
 
-  BufferState() = default;
-
-  /// Takes ownership of an existing heap buffer with the given capacity.
-  BufferState(T *buffer, size_t capacity)
-      : buffer_(buffer), capacity_(capacity) {};
-
-  /// BufferState owns resources and is therefore move-only.
-  BufferState(const BufferState &other) = delete;
-  BufferState &operator=(const BufferState &other) = delete;
-
-  /// Moves the file handle, buffer, position, capacity, and tape counter.
-  BufferState(BufferState &&other) noexcept {
+  void moveData(BufferState &&other) {
     file_ = std::move(other.file_);
+    other.file_ = nullptr;
+    delete[] buffer_;
     buffer_ = other.buffer_;
     other.buffer_ = nullptr;
     capacity_ = other.capacity_;
@@ -98,20 +97,35 @@ public:
     other.numOnTape_ = 0;
   }
 
+public:
+  /// Deletes the owned buffer and closes the owned file handle, if present.
+  ~BufferState() { delete[] buffer_; }
+
+  BufferState() = default;
+
+  /// Takes ownership of an existing heap buffer with the given capacity.
+  BufferState(T *buffer, size_t capacity)
+      : buffer_(buffer), capacity_(capacity) {};
+
+  // Create a new in-memory buffer. File handles are sweep-local and are not
+  // copied.
+  BufferState(const BufferState &other) { copyBuffer(other); }
+
+  BufferState &operator=(const BufferState &other) {
+    if (this != &other) {
+      copyBuffer(other);
+      file_.reset();
+    }
+    return *this;
+  }
+
+  /// Moves the file handle, buffer, position, capacity, and tape counter.
+  BufferState(BufferState &&other) noexcept { moveData(std::move(other)); }
+
   /// Releases current resources, then moves all resources from other.
   BufferState &operator=(BufferState &&other) noexcept {
     if (this != &other) {
-      file_ = std::move(other.file_);
-      other.file_ = nullptr;
-      delete[] buffer_;
-      buffer_ = other.buffer_;
-      other.buffer_ = nullptr;
-      capacity_ = other.capacity_;
-      currentPos_ = other.currentPos_;
-      numOnTape_ = other.numOnTape_;
-      other.currentPos_ = 0;
-      other.capacity_ = 0;
-      other.numOnTape_ = 0;
+      moveData(std::move(other));
     }
     return *this;
   }

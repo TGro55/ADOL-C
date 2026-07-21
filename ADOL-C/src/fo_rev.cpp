@@ -447,7 +447,7 @@ int int_reverse_safe(
   /****************************************************************************/
   /*                                                                    INITs */
 
-  std::shared_lock lock(tape.mutex_);
+  std::shared_lock lock(tape.accessMutex());
 
   /*------------------------------------------------------------------------*/
   /* Set up stuff for the tape */
@@ -3300,7 +3300,7 @@ int int_reverse_safe(
 #endif
 #endif
 
-  tape.end_sweep(std::move(evalCtx));
+  tape.end_sweep(evalCtx);
 
   return ret_c;
 }

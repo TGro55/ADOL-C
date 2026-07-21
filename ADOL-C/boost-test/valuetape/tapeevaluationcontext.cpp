@@ -24,7 +24,8 @@ static_assert(ADOLC::detail::InfoType<EvalTayInfo, EvalContext, TestErrorType>);
 
 BOOST_AUTO_TEST_CASE(TestEvaluationContextValueVectorHelpersUseLocalBuffer) {
   TapeRecordingContext tapeCtx;
-  EvalContext ctx(tapeCtx);
+  TapeInfos::StatArray stats{};
+  EvalContext ctx(tapeCtx, stats);
   ctx.valBuffer_ =
       ADOLC::detail::ValBuffer(new double[5]{1.0, 2.0, 3.0, 4.0, 5.0}, 5);
   ctx.valBuffer_.position(1);
@@ -44,7 +45,8 @@ BOOST_AUTO_TEST_CASE(TestEvaluationContextValueVectorHelpersUseLocalBuffer) {
 
 BOOST_AUTO_TEST_CASE(TestEvaluationContextGetTaylorsUsesLocalTaylorBuffer) {
   TapeRecordingContext tapeCtx;
-  EvalContext ctx(tapeCtx);
+  TapeInfos::StatArray stats{};
+  EvalContext ctx(tapeCtx, stats);
   ctx.tayBuffer_ =
       ADOLC::detail::TayBuffer(new double[4]{1.0, 2.0, 3.0, 4.0}, 4);
   ctx.tayBuffer_.position(4);
@@ -57,22 +59,32 @@ BOOST_AUTO_TEST_CASE(TestEvaluationContextGetTaylorsUsesLocalTaylorBuffer) {
   BOOST_CHECK_EQUAL(ctx.tayBuffer_.position(), size_t{2});
 }
 
-BOOST_AUTO_TEST_CASE(TestEvaluationContextTakesParamstoreOwnership) {
+BOOST_AUTO_TEST_CASE(TestEvaluationContextClonesRecordingState) {
   ADOLC::detail::TapeRecordingContext recordCtx{};
   recordCtx.paramstore = new double[2]{1.0, 2.0};
-  auto buffer = new double[10];
-  recordCtx.tayBuffer_ = ADOLC::detail::TayBuffer(buffer, 10);
+  auto buffer = new double[2]{3.0, 4.0};
+  recordCtx.tayBuffer_ = ADOLC::detail::TayBuffer(buffer, 2);
   auto oldPtr = recordCtx.paramstore;
 
-  EvalContext ctx(recordCtx);
-  BOOST_CHECK_EQUAL(ctx.paramstore, oldPtr);
-  BOOST_CHECK_EQUAL(recordCtx.paramstore, nullptr);
-  BOOST_CHECK_EQUAL(ctx.tayBuffer_.releaseBuffer(), buffer);
+  TapeInfos::StatArray stats{};
+  stats[TapeInfos::NUM_PARAM] = 2;
+  EvalContext ctx(recordCtx, stats);
+  BOOST_REQUIRE_NE(ctx.paramstore, nullptr);
+  BOOST_CHECK_NE(ctx.paramstore, oldPtr);
+  BOOST_CHECK_EQUAL(recordCtx.paramstore, oldPtr);
+  BOOST_CHECK_EQUAL(ctx.paramstore[0], 1.0);
+  BOOST_CHECK_EQUAL(ctx.paramstore[1], 2.0);
+  BOOST_REQUIRE_NE(ctx.tayBuffer_.begin(), nullptr);
+  BOOST_CHECK_NE(ctx.tayBuffer_.begin(), buffer);
+  BOOST_CHECK_EQUAL(recordCtx.tayBuffer_.begin(), buffer);
+  BOOST_CHECK_EQUAL(ctx.tayBuffer_.begin()[0], 3.0);
+  BOOST_CHECK_EQUAL(ctx.tayBuffer_.begin()[1], 4.0);
 }
 
 BOOST_AUTO_TEST_CASE(TestEvaluationContextTaylorBackUsesFullInCoreBlock) {
   TapeRecordingContext tapeCtx;
-  EvalContext ctx(tapeCtx);
+  TapeInfos::StatArray stats{};
+  EvalContext ctx(tapeCtx, stats);
   ctx.tayBuffer_ = ADOLC::detail::TayBuffer(new double[2]{7.0, 8.0}, 2);
   ctx.tayBuffer_.numOnTape(2);
   ctx.lastTayBlockInCore = 1;
@@ -99,7 +111,8 @@ BOOST_AUTO_TEST_CASE(TestEvaluationContextTaylorBackOpensFileForPriorBlocks) {
   }
 
   TapeRecordingContext tapeCtx;
-  EvalContext ctx(tapeCtx);
+  TapeInfos::StatArray stats{};
+  EvalContext ctx(tapeCtx, stats);
   ctx.tayBuffer_ = ADOLC::detail::TayBuffer(new double[2]{3.0, 4.0}, 2);
   ctx.tayBuffer_.numOnTape(4);
   ctx.lastTayBlockInCore = 1;

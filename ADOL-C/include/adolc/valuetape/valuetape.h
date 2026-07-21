@@ -16,10 +16,13 @@
 #include <adolc/valuetape/tapeevaluationcontext.h>
 #include <adolc/valuetape/tapeinfos.h>
 #include <adolc/valuetape/taperecordingcontext.h>
+#include <adolc/valuetape/taperegistry.h>
+#include <atomic>
 #include <cstdarg>
 #include <cstdio>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <shared_mutex>
 #include <span>
 #include <stack>
@@ -72,6 +75,10 @@ class ADOLC_API ValueTape {
   TapeInfos tapeInfos_;
   PersistantTapeInfos perTapeInfos_;
   size_t ext_diff_fct_index_{0};
+  std::shared_mutex mutex_;
+  std::atomic<bool> statsNeedReload_{false};
+  std::mutex statsLoadMutex_;
+  std::optional<std::unique_lock<std::shared_mutex>> writeLock_;
 
 #define EDFCTS_BLOCK_SIZE 10
   Buffer<ext_diff_fct, EDFCTS_BLOCK_SIZE> ext_buffer_;
@@ -92,8 +99,6 @@ class ADOLC_API ValueTape {
 #endif
 
 public:
-  std::shared_mutex mutex_;
-  std::optional<std::unique_lock<std::shared_mutex>> writeLock;
   ~ValueTape();
 
   // a tape always need a tapeId,
@@ -110,6 +115,8 @@ public:
         tapeInfos_(std::move(other.tapeInfos_)),
         perTapeInfos_(std::move(other.perTapeInfos_)),
         ext_diff_fct_index_(other.ext_diff_fct_index_),
+        statsNeedReload_(
+            other.statsNeedReload_.exchange(false, std::memory_order_relaxed)),
         ext_buffer_(std::move(other.ext_buffer_)),
         ext2_buffer_(std::move(other.ext2_buffer_)),
         cp_buffer_(std::move(other.cp_buffer_))
@@ -127,6 +134,9 @@ public:
       globalTapeVars_ = std::move(other.globalTapeVars_);
       perTapeInfos_ = std::move(other.perTapeInfos_);
       ext_diff_fct_index_ = other.ext_diff_fct_index_;
+      statsNeedReload_.store(
+          other.statsNeedReload_.exchange(false, std::memory_order_relaxed),
+          std::memory_order_release);
       ext_buffer_ = std::move(other.ext_buffer_);
       ext2_buffer_ = std::move(other.ext2_buffer_);
       cp_buffer_ = std::move(other.cp_buffer_);
@@ -137,6 +147,18 @@ public:
     }
     return *this;
   }
+
+  void statsNeedReload() {
+    statsNeedReload_.store(true, std::memory_order_release);
+  }
+
+  std::shared_mutex &accessMutex() noexcept { return mutex_; }
+
+  bool isRecording() const noexcept {
+    return currentTapeStack().back().current == this;
+  }
+  void beginRecording();
+  void endRecording();
 
 #ifdef ADOLC_SPARSE
   // updates the tape infos on sparse Jac or Hess for the given ID
@@ -389,19 +411,19 @@ public:
     globalTapeVars_.branchSwitchWarning = 0;
   }
   void enableMinMaxUsingAbs() {
-    if (!writeLock.has_value())
-      globalTapeVars_.nominmaxFlag = 1;
-    else
+    if (isRecording())
       ADOLCError::fail(ADOLCError::ErrorType::ENABLE_MINMAX_USING_ABS,
                        CURRENT_LOCATION);
+    std::unique_lock lock(mutex_);
+    globalTapeVars_.nominmaxFlag = 1;
   }
 
   void disableMinMaxUsingAbs() {
-    if (!writeLock.has_value())
-      globalTapeVars_.nominmaxFlag = 0;
-    else
+    if (isRecording())
       ADOLCError::fail(ADOLCError::ErrorType::DISABLE_MINMAX_USING_ABS,
                        CURRENT_LOCATION);
+    std::unique_lock lock(mutex_);
+    globalTapeVars_.nominmaxFlag = 0;
   }
 
   // helper for creating contiguous adouble locations
@@ -669,33 +691,30 @@ public:
     using namespace ADOLC::detail;
     openTape();
 
-    // recover no mode
-    try {
-      TapeEvaluationContext evalCtx(recordCtx_);
-      initTapeBuffers(evalCtx);
-      if (tapestats(TapeInfos::NUM_PARAM) > 0 && evalCtx.paramstore == nullptr)
-        readParams(evalCtx.paramstore);
-      if constexpr (std::is_same_v<Mode, Forward>) {
-        prepare_for_all(evalCtx, AllInfoTypes{});
+    TapeEvaluationContext evalCtx(recordCtx_, tapeInfos_.stats);
+    initTapeBuffers(evalCtx);
+    if (tapestats(TapeInfos::NUM_PARAM) > 0 && evalCtx.paramstore == nullptr)
+      readParams(evalCtx.paramstore);
+    if constexpr (std::is_same_v<Mode, Forward>) {
+      prepare_for_all(evalCtx, AllInfoTypes{});
 #ifdef ADOLC_AMPI_SUPPORT
-        TAPE_AMPI_resetBottom();
+      TAPE_AMPI_resetBottom();
 #endif
-        return evalCtx;
-      } else if constexpr (std::is_same_v<Mode, Reverse>) {
-        prepare_rev_all(evalCtx, AllInfoTypes{});
+      return evalCtx;
+    } else if constexpr (std::is_same_v<Mode, Reverse>) {
+      prepare_rev_all(evalCtx, AllInfoTypes{});
 #ifdef ADOLC_AMPI_SUPPORT
-        TAPE_AMPI_resetTop();
+      TAPE_AMPI_resetTop();
 #endif
-        return evalCtx;
-      } else {
-        static_assert(!std::is_same_v<Mode, Mode>, "Mode not implemented!");
-      }
-    } catch (...) {
-      throw;
+      return evalCtx;
+    } else {
+      static_assert(!std::is_same_v<Mode, Mode>, "Mode not implemented!");
     }
   }
   // finish a forward or reverse sweep
-  void end_sweep(TapeEvaluationContext &&evalCtx);
+  void end_sweep(TapeEvaluationContext &evalCtx);
+  void end_sweep(TapeEvaluationContext &&evalCtx,
+                 std::unique_lock<std::shared_mutex> /*unused*/);
   // initialization for the taping process -> buffer allocation, sets files
   // names, and calls appropriate setup routines
   void start_trace();

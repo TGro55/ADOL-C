@@ -91,7 +91,8 @@ struct TapeInfos {
     return *this;
   }
 
-  std::array<size_t, STAT_SIZE> stats{};
+  using StatArray = std::array<size_t, STAT_SIZE>;
+  StatArray stats{};
   std::array<char *, 4> fileNames{};
   // the base names of every tape type
   std::array<std::string, 4> tapeBaseNames_;

@@ -6,10 +6,15 @@
 #include <adolc/valuetape/tapeevaluationcontext.h>
 #include <adolc/valuetape/tapeinfos.h>
 #include <adolc/valuetape/taperecordingcontext.h>
+#include <adolc/valuetape/taperegistry.h>
 #include <adolc/valuetape/valuetape.h>
+#include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cstddef>
 #include <memory>
+#include <mutex>
+#include <shared_mutex>
 #include <stdexcept>
 #include <string>
 #include <sys/stat.h> // used in readconfigFile
@@ -17,12 +22,31 @@
 
 using ADOLC::detail::TapeEvaluationContext;
 ValueTape::~ValueTape() {
-  assert(!writeLock.has_value() &&
-         "Tape is desctructed before worMode is NO_MODE!");
+  assert(!writeLock_.has_value() &&
+         "Tape is destroyed while recording is active!");
   // ensure that we dont delete the valuetape before all adouble or pdouble are
   // deleted!
   assert(numLives() == 0 &&
          "Can not destroy ValueTape there are still active variables!");
+}
+void ValueTape::beginRecording() {
+  auto ret =
+      std::find_if(currentTapeStack().begin(), currentTapeStack().end(),
+                   [this](auto &&frame) { return frame.current == this; });
+  if (ret != currentTapeStack().end()) {
+    throw std::runtime_error("Tape (id=" + std::to_string(tapeId()) +
+                             ") is already recording....");
+  }
+  std::unique_lock lock(mutex_);
+  currentTapeStack().emplace_back(RecordingFrame{currentTapePtr(), this});
+  currentTapePtr() = this;
+  writeLock_.emplace(std::move(lock));
+}
+
+void ValueTape::endRecording() {
+  currentTapePtr() = currentTapeStack().back().prev;
+  currentTapeStack().pop_back();
+  writeLock_.reset();
 }
 
 void ValueTape::initTapeInfos_keep() {
@@ -59,10 +83,6 @@ void ValueTape::initTapeInfos_keep() {
  * - returns 0 without error
  * - returns 1 if tapeId was already/still in use */
 int ValueTape::initNewTape() {
-  using ADOLCError::fail;
-  using ADOLCError::FailInfo;
-  using ADOLCError::ErrorType::TAPING_TAPE_STILL_IN_USE;
-
   if (recordCtx_.tayBuffer_.file() != nullptr)
     rewind(recordCtx_.tayBuffer_.file());
 
@@ -452,17 +472,18 @@ void ValueTape::setParamVec(std::span<const double> paramvec) {
   using ADOLCError::ErrorType::PARAM_COUNTS_MISMATCH;
   using ADOLCError::ErrorType::TAPING_TAPE_STILL_IN_USE;
 
+  if (isRecording()) {
+    throw std::runtime_error("Can not change paramvector of Tape (id=" +
+                             std::to_string(tapeId()) + ") during taping!");
+  }
+  std::unique_lock lock(mutex_);
+
   if (tapestats(TapeInfos::NUM_PARAM) != paramvec.size()) {
     fail(PARAM_COUNTS_MISMATCH, CURRENT_LOCATION,
          FailInfo{.info1 = tapeId(),
                   .info5 = paramvec.size(),
                   .info6 = tapeInfos_.stats[TapeInfos::NUM_PARAM]});
   }
-
-  if (writeLock.has_value()) {
-    throw std::runtime_error("Should not happen!");
-  }
-  writeLock.emplace(mutex_);
 
   if (!recordCtx_.paramstore)
     recordCtx_.paramstore = new double[tapestats(TapeInfos::NUM_PARAM)];
@@ -473,7 +494,6 @@ void ValueTape::setParamVec(std::span<const double> paramvec) {
     paramstore_view[i] = paramvec[i];
 
   deg_save(-1);
-  writeLock.reset();
 }
 
 /**
@@ -516,23 +536,42 @@ void ValueTape::read_tape_stats() {
   using ADOLCError::fail;
   using ADOLCError::FailInfo;
   using ADOLCError::ErrorType::INTEGER_TAPE_FOPEN_FAILED;
+
+  if (!statsNeedReload_.load(std::memory_order_acquire))
+    return;
+
+  std::lock_guard lock(statsLoadMutex_);
+
+  if (!statsNeedReload_.load(std::memory_order_relaxed))
+    return;
+
   ADOLC_ID tape_ADOLC_ID{};
+
   std::unique_ptr<FILE, decltype(&fclose)> loc_file(fopen(loc_fileName(), "rb"),
                                                     &fclose);
+
+  TapeInfos::StatArray stats{};
   if (loc_file == nullptr ||
       (fread(&tape_ADOLC_ID, sizeof(ADOLC_ID), 1, loc_file.get()) != 1) ||
-      (fread(tapeInfos_.stats.data(), TapeInfos::STAT_SIZE * sizeof(size_t), 1,
+      (fread(stats.data(), TapeInfos::STAT_SIZE * sizeof(size_t), 1,
              loc_file.get()) != 1)) {
     fail(INTEGER_TAPE_FOPEN_FAILED, CURRENT_LOCATION,
          FailInfo{.info1 = tapeId()});
   }
   compare_adolc_ids(get_adolc_id(), tape_ADOLC_ID);
+  tapeInfos_.stats = stats;
+  statsNeedReload_.store(false, std::memory_order_release);
 }
 
 /****************************************************************************/
 /* Finish a forward or reverse sweep. */
 /****************************************************************************/
-void ValueTape::end_sweep(TapeEvaluationContext &&evalCtx) {
+void ValueTape::end_sweep(TapeEvaluationContext &evalCtx) {
+  evalCtx.closeSweepFiles();
+}
+
+void ValueTape::end_sweep(TapeEvaluationContext &&evalCtx,
+                          std::unique_lock<std::shared_mutex> /*unused*/) {
   evalCtx.closeSweepFiles();
   recordCtx_ = TapeRecordingContext();
   evalCtx.releaseTo(recordCtx_);
