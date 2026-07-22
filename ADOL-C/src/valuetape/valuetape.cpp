@@ -570,8 +570,7 @@ void ValueTape::end_sweep(TapeEvaluationContext &evalCtx) {
   evalCtx.closeSweepFiles();
 }
 
-void ValueTape::end_sweep(TapeEvaluationContext &&evalCtx,
-                          std::unique_lock<std::shared_mutex> /*unused*/) {
+void ValueTape::end_sweep(TapeEvaluationContext &&evalCtx) {
   evalCtx.closeSweepFiles();
   recordCtx_ = TapeRecordingContext();
   evalCtx.releaseTo(recordCtx_);

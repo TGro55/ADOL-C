@@ -6,8 +6,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
+#include <memory>
+#include <shared_mutex>
 #include <type_traits>
 #include <utility>
+#include <variant>
 
 namespace ADOLC::detail {
 
@@ -43,46 +46,26 @@ struct TapeEvaluationContext {
   TapeEvaluationContext() = delete;
 
   explicit TapeEvaluationContext(const TapeRecordingContext &tapeCtx,
-                                 TapeInfos::StatArray stats)
-      : opBuffer_(tapeCtx.opBuffer_), valBuffer_(tapeCtx.valBuffer_),
-        locBuffer_(tapeCtx.locBuffer_), tayBuffer_(tapeCtx.tayBuffer_),
-        numInds(tapeCtx.numInds), numDeps(tapeCtx.numDeps),
-        keepTaylors(tapeCtx.keepTaylors), num_eq_prod(tapeCtx.num_eq_prod),
-        deg_save(tapeCtx.deg_save), tay_numInds(tapeCtx.tay_numInds),
-        tay_numDeps(tapeCtx.tay_numDeps), numSwitches(tapeCtx.numSwitches),
-        nestedReverseEval(tapeCtx.nestedReverseEval),
-        nextBufferNumber(tapeCtx.nextBufferNumber),
-        lastTayBlockInCore(tapeCtx.lastTayBlockInCore) {
+                                 TapeInfos::StatArray stats,
+                                 std::shared_lock<std::shared_mutex> &&lock)
+      : lock_(std::move(lock)) {
+    copyData(tapeCtx, stats);
+  }
 
-    if (tapeCtx.signature != nullptr) {
-      signature = new double[stats[TapeInfos::NUM_SWITCHES]];
-      std::copy_n(tapeCtx.signature, stats[TapeInfos::NUM_SWITCHES], signature);
-    }
-    if (tapeCtx.paramstore != nullptr) {
-      paramstore = new double[stats[TapeInfos::NUM_PARAM]];
-      std::copy_n(tapeCtx.paramstore, stats[TapeInfos::NUM_PARAM], paramstore);
-    }
+  explicit TapeEvaluationContext(
+      TapeRecordingContext &&other,
+      std::unique_lock<std::shared_mutex> &&lock) noexcept
+      : lock_(std::move(lock)), originCtx_(&other) {
+    moveData(std::move(other));
   }
 
   TapeEvaluationContext(const TapeEvaluationContext &) = delete;
   TapeEvaluationContext &operator=(const TapeEvaluationContext &) = delete;
 
   TapeEvaluationContext(TapeEvaluationContext &&other) noexcept
-      : opBuffer_(std::move(other.opBuffer_)),
-        valBuffer_(std::move(other.valBuffer_)),
-        locBuffer_(std::move(other.locBuffer_)),
-        tayBuffer_(std::move(other.tayBuffer_)), numInds(other.numInds),
-        numDeps(other.numDeps), keepTaylors(other.keepTaylors),
-        num_eq_prod(other.num_eq_prod), deg_save(other.deg_save),
-        tay_numInds(other.tay_numInds), tay_numDeps(other.tay_numDeps),
-        numSwitches(other.numSwitches),
-        nestedReverseEval(other.nestedReverseEval),
-        nextBufferNumber(other.nextBufferNumber),
-        lastTayBlockInCore(other.lastTayBlockInCore),
-        signature(std::exchange(other.signature, nullptr)),
-        paramstore(std::exchange(other.paramstore, nullptr)),
-        originCtx_(other.originCtx_) {
-    other.originCtx_ = nullptr;
+      : lock_(std::move(other.lock_)),
+        originCtx_(std::exchange(other.originCtx_, nullptr)) {
+    moveData(std::move(other));
   }
 
   TapeEvaluationContext &
@@ -107,9 +90,65 @@ struct TapeEvaluationContext {
   double *signature{nullptr};
   double *paramstore{nullptr};
 
+private:
+  using Lock = std::variant<std::unique_lock<std::shared_mutex>,
+                            std::shared_lock<std::shared_mutex>>;
+
+  Lock lock_;
   // used to recover push data back to recordCtx if an exception happens.
   TapeRecordingContext *originCtx_{nullptr};
 
+  void copyData(const TapeRecordingContext &other, TapeInfos::StatArray stats) {
+    opBuffer_ = other.opBuffer_;
+    valBuffer_ = other.valBuffer_;
+    locBuffer_ = other.locBuffer_;
+    tayBuffer_ = other.tayBuffer_;
+
+    numInds = other.numInds;
+    numDeps = other.numDeps;
+    keepTaylors = other.keepTaylors;
+    num_eq_prod = other.num_eq_prod;
+    deg_save = other.deg_save;
+    tay_numInds = other.tay_numInds;
+    tay_numDeps = other.tay_numDeps;
+    numSwitches = other.numSwitches;
+    nestedReverseEval = other.nestedReverseEval;
+    nextBufferNumber = other.nextBufferNumber;
+    lastTayBlockInCore = other.lastTayBlockInCore;
+
+    if (other.signature != nullptr) {
+      signature = new double[stats[TapeInfos::NUM_SWITCHES]];
+      std::copy_n(other.signature, stats[TapeInfos::NUM_SWITCHES], signature);
+    }
+    if (other.paramstore != nullptr) {
+      paramstore = new double[stats[TapeInfos::NUM_PARAM]];
+      std::copy_n(other.paramstore, stats[TapeInfos::NUM_PARAM], paramstore);
+    }
+  }
+
+  template <EvalOrRecordContextType Context>
+  void moveData(Context &&other) noexcept {
+    opBuffer_ = std::move(other.opBuffer_);
+    valBuffer_ = std::move(other.valBuffer_);
+    locBuffer_ = std::move(other.locBuffer_);
+    tayBuffer_ = std::move(other.tayBuffer_);
+
+    numInds = other.numInds;
+    numDeps = other.numDeps;
+    keepTaylors = other.keepTaylors;
+    num_eq_prod = other.num_eq_prod;
+    deg_save = other.deg_save;
+    tay_numInds = other.tay_numInds;
+    tay_numDeps = other.tay_numDeps;
+    numSwitches = other.numSwitches;
+    nestedReverseEval = other.nestedReverseEval;
+    nextBufferNumber = other.nextBufferNumber;
+    lastTayBlockInCore = other.lastTayBlockInCore;
+    signature = std::exchange(other.signature, nullptr);
+    paramstore = std::exchange(other.paramstore, nullptr);
+  }
+
+public:
   void closeSweepFiles() {
     opBuffer_.closeFile();
     locBuffer_.closeFile();

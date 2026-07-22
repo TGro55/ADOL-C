@@ -5,6 +5,7 @@
 #include <array>
 #include <boost/test/unit_test.hpp>
 #include <cstdio>
+#include <shared_mutex>
 
 BOOST_AUTO_TEST_SUITE(Test_TapeInfos)
 
@@ -22,6 +23,16 @@ using TestEvalOpInfo =
 using TestEvalTayInfo =
     ADOLC::detail::TayInfo<TestEvaluationContext, TestErrorType>;
 using StatsArray = std::array<size_t, TapeInfos::STAT_SIZE>;
+
+namespace {
+
+std::shared_mutex testMutex;
+
+std::shared_lock<std::shared_mutex> acquireTestReadLock() {
+  return std::shared_lock<std::shared_mutex>(testMutex);
+}
+
+} // namespace
 
 static_assert(ADOLC::detail::BufferStateType<ADOLC::detail::OpBuffer,
                                              typename TestOpInfo::value_type>);
@@ -186,7 +197,7 @@ BOOST_AUTO_TEST_CASE(TestOpInfoUpdateBufferPositionReverseUsesBlockSize) {
 BOOST_AUTO_TEST_CASE(TestOpInfoPrepareForwardPosition) {
   TestRecordingContext recordCtx;
   StatsArray stats{};
-  TestEvaluationContext ctx(recordCtx, stats);
+  TestEvaluationContext ctx(recordCtx, stats, acquireTestReadLock());
   ctx.opBuffer_ = ADOLC::detail::OpBuffer(new unsigned char[8]{}, 8);
 
   TestEvalOpInfo::prepareForwardPosition(ctx,
@@ -222,7 +233,7 @@ BOOST_AUTO_TEST_CASE(TestLocInfoPrepareForwardPositionHonorsStatSpace) {
 
   TestRecordingContext recordCtx;
   StatsArray stats{};
-  TestEvaluationContext ctx(recordCtx, stats);
+  TestEvaluationContext ctx(recordCtx, stats, acquireTestReadLock());
 
   stats[TapeInfos::LOC_BUFFER_SIZE] = 10;
   ctx.locBuffer_ = ADOLC::detail::LocBuffer(new size_t[10]{}, 10);
@@ -282,7 +293,7 @@ BOOST_AUTO_TEST_CASE(TestTayInfoEnsureReverseReadableLoadsBoundaryBlock) {
 
   TestRecordingContext recordCtx;
   StatsArray stats{};
-  TestEvaluationContext ctx(recordCtx, stats);
+  TestEvaluationContext ctx(recordCtx, stats, acquireTestReadLock());
   stats[TapeInfos::TAY_BUFFER_SIZE] = 2;
   ctx.tayBuffer_ = ADOLC::detail::TayBuffer(new double[2]{0.0, 0.0}, 2);
   ctx.tayBuffer_.openFile(fileName, "rb");

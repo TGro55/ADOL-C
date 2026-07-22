@@ -43,6 +43,7 @@ and _NTIGHT__
 #include <mutex>
 #include <shared_mutex>
 #include <string.h>
+#include <type_traits>
 #include <utility>
 
 #if defined(ADOLC_DEBUG) || defined(_ZOS_)
@@ -1097,20 +1098,13 @@ int hov_forward(
 
   /****************************************************************************/
   /*                                                                    INITs */
-#if defined _KEEP_
-  using Lock = std::variant<std::shared_lock<std::shared_mutex>,
-                            std::unique_lock<std::shared_mutex>>;
-  Lock lock =
-      keep ? Lock{std::in_place_type<std::unique_lock<std::shared_mutex>>,
-                  tape.accessMutex()}
-           : Lock{std::in_place_type<std::shared_lock<std::shared_mutex>>,
-                  tape.accessMutex()};
-#else
-  std::shared_lock lock(tape.accessMutex());
-#endif // _KEEP_
 
-  /* Initialize the Forward Sweep */
+#if defined _KEEP_
+  auto evalCtx = tape.init_sweep<ValueTape::Forward>(keep);
+#else
   auto evalCtx = tape.init_sweep<ValueTape::Forward>();
+#endif // _KEEP_
+  /* Initialize the Forward Sweep */
 
   if ((to_size_t(depcheck) != tape.tapestats(TapeInfos::NUM_DEPENDENTS)) ||
       (to_size_t(indcheck) != tape.tapestats(TapeInfos::NUM_INDEPENDENTS)))
@@ -5867,9 +5861,7 @@ int hov_forward(
 
 #if defined(_KEEP_)
   if (keep) {
-    tape.end_sweep(
-        std::move(evalCtx),
-        std::move(std::get<std::unique_lock<std::shared_mutex>>(lock)));
+    tape.end_sweep(std::move(evalCtx));
   } else {
     tape.end_sweep(evalCtx);
   }

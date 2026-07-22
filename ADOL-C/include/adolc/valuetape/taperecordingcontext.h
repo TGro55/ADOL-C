@@ -24,45 +24,13 @@ struct TapeRecordingContext {
   TapeRecordingContext(const TapeRecordingContext &) = delete;
   TapeRecordingContext &operator=(const TapeRecordingContext &) = delete;
 
-  TapeRecordingContext(TapeRecordingContext &&other) noexcept
-      : opBuffer_(std::move(other.opBuffer_)),
-        valBuffer_(std::move(other.valBuffer_)),
-        locBuffer_(std::move(other.locBuffer_)),
-        tayBuffer_(std::move(other.tayBuffer_)), numInds(other.numInds),
-        numDeps(other.numDeps), keepTaylors(other.keepTaylors),
-        num_eq_prod(other.num_eq_prod), deg_save(other.deg_save),
-        tay_numInds(other.tay_numInds), tay_numDeps(other.tay_numDeps),
-        numSwitches(other.numSwitches),
-        nestedReverseEval(other.nestedReverseEval),
-        nextBufferNumber(other.nextBufferNumber),
-        lastTayBlockInCore(other.lastTayBlockInCore),
-        signature(std::exchange(other.signature, nullptr)),
-        paramstore(std::exchange(other.paramstore, nullptr)) {}
+  TapeRecordingContext(TapeRecordingContext &&other) noexcept {
+    moveData(std::move(other));
+  }
 
   TapeRecordingContext &operator=(TapeRecordingContext &&other) noexcept {
-    if (this != &other) {
-      opBuffer_ = std::move(other.opBuffer_);
-      valBuffer_ = std::move(other.valBuffer_);
-      locBuffer_ = std::move(other.locBuffer_);
-      tayBuffer_ = std::move(other.tayBuffer_);
-
-      numInds = other.numInds;
-      numDeps = other.numDeps;
-      keepTaylors = other.keepTaylors;
-      num_eq_prod = other.num_eq_prod;
-      deg_save = other.deg_save;
-      tay_numInds = other.tay_numInds;
-      tay_numDeps = other.tay_numDeps;
-      numSwitches = other.numSwitches;
-      nestedReverseEval = other.nestedReverseEval;
-      nextBufferNumber = other.nextBufferNumber;
-      lastTayBlockInCore = other.lastTayBlockInCore;
-
-      delete[] signature;
-      signature = std::exchange(other.signature, nullptr);
-      delete[] paramstore;
-      paramstore = std::exchange(other.paramstore, nullptr);
-    }
+    if (this != &other)
+      moveData(std::move(other));
     return *this;
   }
   ADOLC::detail::OpBuffer opBuffer_{};
@@ -103,6 +71,32 @@ struct TapeRecordingContext {
   double *signature{nullptr};
   double *paramstore{nullptr};
 
+private:
+  void moveData(TapeRecordingContext &&other) noexcept {
+    opBuffer_ = std::move(other.opBuffer_);
+    valBuffer_ = std::move(other.valBuffer_);
+    locBuffer_ = std::move(other.locBuffer_);
+    tayBuffer_ = std::move(other.tayBuffer_);
+
+    numInds = other.numInds;
+    numDeps = other.numDeps;
+    keepTaylors = other.keepTaylors;
+    num_eq_prod = other.num_eq_prod;
+    deg_save = other.deg_save;
+    tay_numInds = other.tay_numInds;
+    tay_numDeps = other.tay_numDeps;
+    numSwitches = other.numSwitches;
+    nestedReverseEval = other.nestedReverseEval;
+    nextBufferNumber = other.nextBufferNumber;
+    lastTayBlockInCore = other.lastTayBlockInCore;
+
+    delete[] signature;
+    signature = std::exchange(other.signature, nullptr);
+    delete[] paramstore;
+    paramstore = std::exchange(other.paramstore, nullptr);
+  }
+
+public:
   // functions for handling loc tape
   void put_loc(size_t loc) { locBuffer_.writeAndAdvance(loc); }
 

@@ -6,6 +6,9 @@
 #include <boost/test/unit_test.hpp>
 #include <cstdio>
 #include <filesystem>
+#include <mutex>
+#include <optional>
+#include <shared_mutex>
 #include <string>
 
 BOOST_AUTO_TEST_SUITE(Test_TapeEvaluationContext)
@@ -17,6 +20,16 @@ using EvalLocInfo = ADOLC::detail::LocInfo<EvalContext, TestErrorType>;
 using EvalValInfo = ADOLC::detail::ValInfo<EvalContext, TestErrorType>;
 using EvalTayInfo = ADOLC::detail::TayInfo<EvalContext, TestErrorType>;
 
+namespace {
+
+std::shared_mutex testMutex;
+
+std::shared_lock<std::shared_mutex> acquireTestReadLock() {
+  return std::shared_lock<std::shared_mutex>(testMutex);
+}
+
+} // namespace
+
 static_assert(ADOLC::detail::InfoType<EvalOpInfo, EvalContext, TestErrorType>);
 static_assert(ADOLC::detail::InfoType<EvalLocInfo, EvalContext, TestErrorType>);
 static_assert(ADOLC::detail::InfoType<EvalValInfo, EvalContext, TestErrorType>);
@@ -25,7 +38,7 @@ static_assert(ADOLC::detail::InfoType<EvalTayInfo, EvalContext, TestErrorType>);
 BOOST_AUTO_TEST_CASE(TestEvaluationContextValueVectorHelpersUseLocalBuffer) {
   TapeRecordingContext tapeCtx;
   TapeInfos::StatArray stats{};
-  EvalContext ctx(tapeCtx, stats);
+  EvalContext ctx(tapeCtx, stats, acquireTestReadLock());
   ctx.valBuffer_ =
       ADOLC::detail::ValBuffer(new double[5]{1.0, 2.0, 3.0, 4.0, 5.0}, 5);
   ctx.valBuffer_.position(1);
@@ -46,7 +59,7 @@ BOOST_AUTO_TEST_CASE(TestEvaluationContextValueVectorHelpersUseLocalBuffer) {
 BOOST_AUTO_TEST_CASE(TestEvaluationContextGetTaylorsUsesLocalTaylorBuffer) {
   TapeRecordingContext tapeCtx;
   TapeInfos::StatArray stats{};
-  EvalContext ctx(tapeCtx, stats);
+  EvalContext ctx(tapeCtx, stats, acquireTestReadLock());
   ctx.tayBuffer_ =
       ADOLC::detail::TayBuffer(new double[4]{1.0, 2.0, 3.0, 4.0}, 4);
   ctx.tayBuffer_.position(4);
@@ -68,7 +81,7 @@ BOOST_AUTO_TEST_CASE(TestEvaluationContextClonesRecordingState) {
 
   TapeInfos::StatArray stats{};
   stats[TapeInfos::NUM_PARAM] = 2;
-  EvalContext ctx(recordCtx, stats);
+  EvalContext ctx(recordCtx, stats, acquireTestReadLock());
   BOOST_REQUIRE_NE(ctx.paramstore, nullptr);
   BOOST_CHECK_NE(ctx.paramstore, oldPtr);
   BOOST_CHECK_EQUAL(recordCtx.paramstore, oldPtr);
@@ -81,10 +94,33 @@ BOOST_AUTO_TEST_CASE(TestEvaluationContextClonesRecordingState) {
   BOOST_CHECK_EQUAL(ctx.tayBuffer_.begin()[1], 4.0);
 }
 
+BOOST_AUTO_TEST_CASE(TestEvaluationContextMoveRetainsReadLock) {
+  TapeRecordingContext tapeCtx;
+  TapeInfos::StatArray stats{};
+  std::shared_mutex mutex;
+  std::optional<EvalContext> movedCtx;
+
+  {
+    EvalContext ctx(tapeCtx, stats,
+                    std::shared_lock<std::shared_mutex>(mutex));
+    movedCtx.emplace(std::move(ctx));
+  }
+
+  {
+    std::unique_lock writeLock(mutex, std::try_to_lock);
+    BOOST_CHECK(!writeLock.owns_lock());
+  }
+
+  movedCtx.reset();
+
+  std::unique_lock writeLock(mutex, std::try_to_lock);
+  BOOST_CHECK(writeLock.owns_lock());
+}
+
 BOOST_AUTO_TEST_CASE(TestEvaluationContextTaylorBackUsesFullInCoreBlock) {
   TapeRecordingContext tapeCtx;
   TapeInfos::StatArray stats{};
-  EvalContext ctx(tapeCtx, stats);
+  EvalContext ctx(tapeCtx, stats, acquireTestReadLock());
   ctx.tayBuffer_ = ADOLC::detail::TayBuffer(new double[2]{7.0, 8.0}, 2);
   ctx.tayBuffer_.numOnTape(2);
   ctx.lastTayBlockInCore = 1;
@@ -112,7 +148,7 @@ BOOST_AUTO_TEST_CASE(TestEvaluationContextTaylorBackOpensFileForPriorBlocks) {
 
   TapeRecordingContext tapeCtx;
   TapeInfos::StatArray stats{};
-  EvalContext ctx(tapeCtx, stats);
+  EvalContext ctx(tapeCtx, stats, acquireTestReadLock());
   ctx.tayBuffer_ = ADOLC::detail::TayBuffer(new double[2]{3.0, 4.0}, 2);
   ctx.tayBuffer_.numOnTape(4);
   ctx.lastTayBlockInCore = 1;

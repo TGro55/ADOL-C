@@ -19,6 +19,7 @@
 #include <adolc/valuetape/taperegistry.h>
 #include <atomic>
 #include <cstdarg>
+#include <cstddef>
 #include <cstdio>
 #include <limits>
 #include <memory>
@@ -670,6 +671,46 @@ public:
   struct Forward : Mode {};
   struct Reverse : Mode {};
 
+private:
+  template <typename Mode> void prepareSweep(TapeEvaluationContext &evalCtx) {
+    using namespace ADOLC::detail;
+
+    initTapeBuffers(evalCtx);
+    if (tapestats(TapeInfos::NUM_PARAM) > 0 && evalCtx.paramstore == nullptr)
+      readParams(evalCtx.paramstore);
+    if constexpr (std::is_same_v<Mode, Forward>) {
+      prepare_for_all(evalCtx, AllInfoTypes{});
+#ifdef ADOLC_AMPI_SUPPORT
+      TAPE_AMPI_resetBottom();
+#endif
+    } else if constexpr (std::is_same_v<Mode, Reverse>) {
+      prepare_rev_all(evalCtx, AllInfoTypes{});
+#ifdef ADOLC_AMPI_SUPPORT
+      TAPE_AMPI_resetTop();
+#endif
+    } else {
+      static_assert(!std::is_same_v<Mode, Mode>, "Mode not implemented!");
+    }
+  }
+
+  template <typename Mode> TapeEvaluationContext initSweepKeep() {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    openTape();
+    TapeEvaluationContext evalCtx(std::move(recordCtx_), std::move(lock));
+    prepareSweep<Mode>(evalCtx);
+    return evalCtx;
+  }
+
+  template <typename Mode> TapeEvaluationContext initSweepWOKeep() {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    openTape();
+    TapeEvaluationContext evalCtx(recordCtx_, tapeInfos_.stats,
+                                  std::move(lock));
+    prepareSweep<Mode>(evalCtx);
+    return evalCtx;
+  }
+
+public:
   /**
    * @brief Initialize a tape sweep.
    *
@@ -687,34 +728,15 @@ public:
    *
    * @tparam Mode Sweep direction selector. Must be either Forward or Reverse.
    */
-  template <class Mode> TapeEvaluationContext init_sweep() {
-    using namespace ADOLC::detail;
-    openTape();
-
-    TapeEvaluationContext evalCtx(recordCtx_, tapeInfos_.stats);
-    initTapeBuffers(evalCtx);
-    if (tapestats(TapeInfos::NUM_PARAM) > 0 && evalCtx.paramstore == nullptr)
-      readParams(evalCtx.paramstore);
-    if constexpr (std::is_same_v<Mode, Forward>) {
-      prepare_for_all(evalCtx, AllInfoTypes{});
-#ifdef ADOLC_AMPI_SUPPORT
-      TAPE_AMPI_resetBottom();
-#endif
-      return evalCtx;
-    } else if constexpr (std::is_same_v<Mode, Reverse>) {
-      prepare_rev_all(evalCtx, AllInfoTypes{});
-#ifdef ADOLC_AMPI_SUPPORT
-      TAPE_AMPI_resetTop();
-#endif
-      return evalCtx;
-    } else {
-      static_assert(!std::is_same_v<Mode, Mode>, "Mode not implemented!");
+  template <typename Mode> TapeEvaluationContext init_sweep(int keep = 0) {
+    if (keep) {
+      return initSweepKeep<Mode>();
     }
+    return initSweepWOKeep<Mode>();
   }
   // finish a forward or reverse sweep
   void end_sweep(TapeEvaluationContext &evalCtx);
-  void end_sweep(TapeEvaluationContext &&evalCtx,
-                 std::unique_lock<std::shared_mutex> /*unused*/);
+  void end_sweep(TapeEvaluationContext &&evalCtx);
   // initialization for the taping process -> buffer allocation, sets files
   // names, and calls appropriate setup routines
   void start_trace();
