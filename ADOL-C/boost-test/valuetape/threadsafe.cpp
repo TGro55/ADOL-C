@@ -9,6 +9,7 @@
 #include <cmath>
 #include <future>
 #include <latch>
+#include <optional>
 #include <shared_mutex>
 #include <stdexcept>
 #include <thread>
@@ -122,6 +123,7 @@ BOOST_AUTO_TEST_CASE(OneJacobianCanBeComputedWithParallelScalarSweeps) {
     y >>= out;
   }
   trace_off();
+  findTape(tapeId).setSharedMode();
 
   const std::array<double, n> point{2.0, 3.0, 4.0};
   const std::array<std::array<double, n>, m> expected{
@@ -203,6 +205,7 @@ BOOST_AUTO_TEST_CASE(OneJacobianCanBeComputedWithStdThreads) {
     y >>= out;
   }
   trace_off();
+  findTape(tapeId).setSharedMode();
 
   const std::array<double, n> point{2.0, 3.0, 4.0};
   const std::array<std::array<double, n>, m> expected{
@@ -267,6 +270,55 @@ BOOST_AUTO_TEST_CASE(OneJacobianCanBeComputedWithStdThreads) {
       BOOST_TEST(reverseRows[row][column] == expected[row][column],
                  tt::tolerance(tol));
   }
+}
+
+BOOST_AUTO_TEST_CASE(ModeChangeWaitsForMovedEvaluationContext) {
+  const short tapeId = createNewTape();
+  ValueTape &tape = findTape(tapeId);
+  trace_on(tapeId);
+  {
+    adouble x;
+    adouble y;
+    double output = 0.0;
+    x <<= 2.0;
+    y = x * x;
+    y >>= output;
+  }
+  trace_off();
+
+  // emplace forces the evaluation context's move constructor to transfer both
+  // the tape-data lease and the shared mode lease.
+  std::optional<ADOLC::detail::TapeEvaluationContext> evalCtx;
+  evalCtx.emplace(tape.init_sweep<ValueTape::Forward>());
+
+  std::promise<void> attemptingModeChange;
+  auto modeChange = std::async(std::launch::async, [&] {
+    attemptingModeChange.set_value();
+    tape.setSharedMode();
+  });
+
+  attemptingModeChange.get_future().wait();
+  BOOST_CHECK(modeChange.wait_for(20ms) == std::future_status::timeout);
+  BOOST_CHECK(tape.isExclusiveNonLocking());
+
+  tape.end_sweep(std::move(*evalCtx));
+  evalCtx.reset();
+  BOOST_REQUIRE(modeChange.wait_for(1s) == std::future_status::ready);
+  BOOST_CHECK_NO_THROW(modeChange.get());
+  BOOST_CHECK(!tape.isExclusiveLocking());
+
+  tape.setExclusiveMode();
+  BOOST_CHECK(tape.isExclusiveLocking());
+}
+
+BOOST_AUTO_TEST_CASE(ModeChangeIsRejectedWhileRecording) {
+  const short tapeId = createNewTape();
+  ValueTape &tape = findTape(tapeId);
+
+  trace_on(tapeId);
+  BOOST_CHECK_THROW(tape.setSharedMode(), ADOLCError::ADOLCError);
+  trace_off();
+  BOOST_CHECK(tape.isExclusiveLocking());
 }
 
 BOOST_AUTO_TEST_SUITE_END()

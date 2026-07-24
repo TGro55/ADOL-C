@@ -45,17 +45,19 @@ struct TapeEvaluationContext {
 
   TapeEvaluationContext() = delete;
 
-  explicit TapeEvaluationContext(const TapeRecordingContext &tapeCtx,
-                                 TapeInfos::StatArray stats,
-                                 std::shared_lock<std::shared_mutex> &&lock)
-      : lock_(std::move(lock)) {
+  explicit TapeEvaluationContext(
+      const TapeRecordingContext &tapeCtx, TapeInfos::StatArray stats,
+      std::shared_lock<std::shared_mutex> &&lock,
+      std::shared_lock<std::shared_mutex> &&dataAccessLock)
+      : lock_(std::move(lock)), dataAccessLock_(std::move(dataAccessLock)) {
     copyData(tapeCtx, stats);
   }
 
   explicit TapeEvaluationContext(
-      TapeRecordingContext &&other,
-      std::unique_lock<std::shared_mutex> &&lock) noexcept
-      : lock_(std::move(lock)), originCtx_(&other) {
+      TapeRecordingContext &&other, std::unique_lock<std::shared_mutex> &&lock,
+      std::shared_lock<std::shared_mutex> &&dataAccessLock) noexcept
+      : lock_(std::move(lock)), dataAccessLock_(std::move(dataAccessLock)),
+        originCtx_(&other) {
     moveData(std::move(other));
   }
 
@@ -64,6 +66,7 @@ struct TapeEvaluationContext {
 
   TapeEvaluationContext(TapeEvaluationContext &&other) noexcept
       : lock_(std::move(other.lock_)),
+        dataAccessLock_(std::move(other.dataAccessLock_)),
         originCtx_(std::exchange(other.originCtx_, nullptr)) {
     moveData(std::move(other));
   }
@@ -95,6 +98,7 @@ private:
                             std::shared_lock<std::shared_mutex>>;
 
   Lock lock_;
+  std::shared_lock<std::shared_mutex> dataAccessLock_;
   // used to recover push data back to recordCtx if an exception happens.
   TapeRecordingContext *originCtx_{nullptr};
 

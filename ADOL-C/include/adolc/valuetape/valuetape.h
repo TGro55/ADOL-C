@@ -80,6 +80,16 @@ class ADOLC_API ValueTape {
   std::atomic<bool> statsNeedReload_{false};
   std::mutex statsLoadMutex_;
   std::optional<std::unique_lock<std::shared_mutex>> writeLock_;
+  enum class DataAccess { Exclusive, Shared };
+
+  struct DataAccessModeGuard {
+    std::shared_mutex mutex_;
+    DataAccess mode_{DataAccess::Exclusive};
+
+    explicit DataAccessModeGuard(DataAccess mode) : mode_(mode) {}
+  };
+
+  DataAccessModeGuard accessMode_{DataAccess::Exclusive};
 
 #define EDFCTS_BLOCK_SIZE 10
   Buffer<ext_diff_fct, EDFCTS_BLOCK_SIZE> ext_buffer_;
@@ -118,6 +128,7 @@ public:
         ext_diff_fct_index_(other.ext_diff_fct_index_),
         statsNeedReload_(
             other.statsNeedReload_.exchange(false, std::memory_order_relaxed)),
+        accessMode_(other.accessMode_.mode_),
         ext_buffer_(std::move(other.ext_buffer_)),
         ext2_buffer_(std::move(other.ext2_buffer_)),
         cp_buffer_(std::move(other.cp_buffer_))
@@ -138,6 +149,7 @@ public:
       statsNeedReload_.store(
           other.statsNeedReload_.exchange(false, std::memory_order_relaxed),
           std::memory_order_release);
+      accessMode_.mode_ = other.accessMode_.mode_;
       ext_buffer_ = std::move(other.ext_buffer_);
       ext2_buffer_ = std::move(other.ext2_buffer_);
       cp_buffer_ = std::move(other.cp_buffer_);
@@ -148,6 +160,34 @@ public:
     }
     return *this;
   }
+
+  bool isExclusiveNonLocking() {
+    return accessMode_.mode_ == DataAccess::Exclusive;
+  }
+  bool isExclusiveLocking() {
+    std::shared_lock<std::shared_mutex> lock(accessMode_.mutex_);
+    return accessMode_.mode_ == DataAccess::Exclusive;
+  }
+
+private:
+  void setMode_(DataAccess mode) {
+    using ADOLCError::fail;
+    using ADOLCError::FailInfo;
+    using ADOLCError::ErrorType::TAPING_TAPE_STILL_IN_USE;
+    std::unique_lock<std::shared_mutex> dataAccessLock(accessMode_.mutex_);
+    if (accessMode_.mode_ == mode) {
+      return;
+    }
+    if (this == currentTapePtr()) {
+      fail(TAPING_TAPE_STILL_IN_USE, CURRENT_LOCATION,
+           FailInfo{.info1 = tapeId()});
+    }
+    accessMode_.mode_ = mode;
+  }
+
+public:
+  void setSharedMode() { setMode_(DataAccess::Shared); }
+  void setExclusiveMode() { setMode_(DataAccess::Exclusive); }
 
   void statsNeedReload() {
     statsNeedReload_.store(true, std::memory_order_release);
@@ -693,19 +733,24 @@ private:
     }
   }
 
-  template <typename Mode> TapeEvaluationContext initSweepKeep() {
+  template <typename Mode>
+  TapeEvaluationContext
+  initSweepKeep(std::shared_lock<std::shared_mutex> &&dataAccessLock) {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     openTape();
-    TapeEvaluationContext evalCtx(std::move(recordCtx_), std::move(lock));
+    TapeEvaluationContext evalCtx(std::move(recordCtx_), std::move(lock),
+                                  std::move(dataAccessLock));
     prepareSweep<Mode>(evalCtx);
     return evalCtx;
   }
 
-  template <typename Mode> TapeEvaluationContext initSweepWOKeep() {
+  template <typename Mode>
+  TapeEvaluationContext
+  initSweepNoKeep(std::shared_lock<std::shared_mutex> &&dataAccessLock) {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     openTape();
-    TapeEvaluationContext evalCtx(recordCtx_, tapeInfos_.stats,
-                                  std::move(lock));
+    TapeEvaluationContext evalCtx(recordCtx_, tapeInfos_.stats, std::move(lock),
+                                  std::move(dataAccessLock));
     prepareSweep<Mode>(evalCtx);
     return evalCtx;
   }
@@ -729,10 +774,12 @@ public:
    * @tparam Mode Sweep direction selector. Must be either Forward or Reverse.
    */
   template <typename Mode> TapeEvaluationContext init_sweep(int keep = 0) {
-    if (keep) {
-      return initSweepKeep<Mode>();
+    std::shared_lock<std::shared_mutex> lock(accessMode_.mutex_);
+    if (keep || accessMode_.mode_ == DataAccess::Exclusive) {
+      return initSweepKeep<Mode>(std::move(lock));
+    } else {
+      return initSweepNoKeep<Mode>(std::move(lock));
     }
-    return initSweepWOKeep<Mode>();
   }
   // finish a forward or reverse sweep
   void end_sweep(TapeEvaluationContext &evalCtx);

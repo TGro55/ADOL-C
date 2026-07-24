@@ -5860,13 +5860,18 @@ int hov_forward(
 #endif
 
 #if defined(_KEEP_)
-  if (keep) {
+  if (keep || tape.isExclusiveNonLocking()) {
     tape.end_sweep(std::move(evalCtx));
   } else {
     tape.end_sweep(evalCtx);
   }
 #else
+if (tape.isExclusiveNonLocking()){
+  tape.end_sweep(std::move(evalCtx));
+}
+else {
   tape.end_sweep(evalCtx);
+}
 #endif // _KEEP_
 #if defined(_INDO_)
 #if defined(_INDOPRO_)

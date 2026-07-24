@@ -407,8 +407,6 @@ int hov_ti_reverse(
   /************************************************************************/
   /*                                                                INITs */
 
-  std::shared_lock lock(tape.accessMutex());
-
   /*----------------------------------------------------------------------*/
   /* Set up stuff for the tape */
 
@@ -3181,8 +3179,11 @@ int hov_ti_reverse(
   myfree1_ulong(jj);
   myfree1(x);
 
-  tape.end_sweep(evalCtx);
-
+  if (tape.isExclusiveNonLocking()) {
+    tape.end_sweep(std::move(evalCtx));
+  } else {
+    tape.end_sweep(evalCtx);
+  }
   return ret_c;
 }
 

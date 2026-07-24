@@ -273,7 +273,6 @@ void tape_doc(short tnum,     /* tape id */
   double aDouble;
 #endif
 
-  std::shared_lock lock(tape.accessMutex());
   auto evalCtx = tape.init_sweep<ValueTape::Forward>();
   tag = tnum;
 
