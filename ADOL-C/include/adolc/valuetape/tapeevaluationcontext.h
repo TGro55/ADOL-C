@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <memory>
+#include <mutex>
 #include <shared_mutex>
 #include <type_traits>
 #include <utility>
@@ -35,12 +36,15 @@ struct TapeEvaluationContext {
   static constexpr StatEntries VAL_FILE_ACCESS = TapeInfos::VAL_FILE_ACCESS;
 
   static constexpr StatEntries TAY_BUFFER_SIZE = TapeInfos::TAY_BUFFER_SIZE;
+  static constexpr StatEntries NUM_TAYS = TapeInfos::NUM_TAYS;
 
   ~TapeEvaluationContext() {
     if (originCtx_ != nullptr) {
       closeSweepFiles();
       releaseTo(*originCtx_);
     }
+    delete[] signature;
+    delete[] paramstore;
   }
 
   TapeEvaluationContext() = delete;
@@ -103,10 +107,10 @@ private:
   TapeRecordingContext *originCtx_{nullptr};
 
   void copyData(const TapeRecordingContext &other, TapeInfos::StatArray stats) {
-    opBuffer_ = other.opBuffer_;
-    valBuffer_ = other.valBuffer_;
-    locBuffer_ = other.locBuffer_;
-    tayBuffer_ = other.tayBuffer_;
+    opBuffer_ = OpBuffer{other.opBuffer_, bufferView};
+    valBuffer_ = ValBuffer{other.valBuffer_, bufferView};
+    locBuffer_ = LocBuffer{other.locBuffer_, bufferView};
+    tayBuffer_ = TayBuffer{other.tayBuffer_, bufferView};
 
     numInds = other.numInds;
     numDeps = other.numDeps;
@@ -237,7 +241,9 @@ public:
   void loadBlockIntoBuffer(size_t blockSize) {
     using ADOLCError::fail;
     auto &buffer = Info::getBuffer(*this);
-
+    if (!buffer.isOwner()) {
+      buffer.allocateAndOwn();
+    }
     const size_t numChunks = blockSize / Info::chunkSize;
     for (size_t chunk = 0; chunk < numChunks; chunk++) {
       const auto ret =
@@ -342,8 +348,11 @@ public:
   size_t taylor_close(const char *tay_fileName) {
     using TayInfoT = ADOLC::detail::TayInfo<TapeEvaluationContext, ErrorType>;
     if (tayBuffer_.file() != nullptr) {
-      if (keepTaylors != 0)
+      if (keepTaylors != 0) {
         put_block<TayInfoT>(tay_fileName, tayBuffer_.position());
+        if (std::fflush(tayBuffer_.file()) != 0)
+          ADOLCError::fail(ErrorType::TAPING_FATAL_IO_ERROR, CURRENT_LOCATION);
+      }
     } else {
       tayBuffer_.numOnTape(tayBuffer_.position());
     }

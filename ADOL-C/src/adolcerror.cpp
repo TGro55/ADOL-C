@@ -242,6 +242,16 @@ void fail(ErrorType error, source_location LocInfo, const FailInfo &failinfo) {
         LocInfo);
     break;
 
+  case to_underlying(ErrorType::EXT_DIFF_SHARED_MODE):
+    throw ADOLCError(
+        "ADOL-C error: external differentiated functions are currently not "
+        "supported while a tape is in shared evaluation mode. Call "
+        "setExclusiveMode() before evaluating this tape. If parallel "
+        "external-function evaluation is required, please open an issue at "
+        "https://github.com/coin-or/ADOL-C/issues.\n",
+        LocInfo);
+    break;
+
   case to_underlying(ErrorType::CHECKPOINTING_CPINFOS_NULLPOINTER):
     throw ADOLCError("ADOL-C error: Got nullptr as pointer to struct "
                      " containing checkpointing information!\n",

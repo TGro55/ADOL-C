@@ -83,6 +83,7 @@ void ValueTape::initTapeInfos_keep() {
  * - returns 0 without error
  * - returns 1 if tapeId was already/still in use */
 int ValueTape::initNewTape() {
+  containsExtDiff_ = false;
   if (recordCtx_.tayBuffer_.file() != nullptr)
     rewind(recordCtx_.tayBuffer_.file());
 
@@ -212,6 +213,8 @@ void ValueTape::taylor_close() {
     if (keepTaylors() != 0) {
       recordCtx_.put_block<TayInfo>(tay_fileName(),
                                     recordCtx_.tayBuffer_.position());
+      if (std::fflush(recordCtx_.tayBuffer_.file()) != 0)
+        ADOLCError::fail(ErrorType::TAPING_FATAL_IO_ERROR, CURRENT_LOCATION);
     }
   } else {
     recordCtx_.tayBuffer_.numOnTape(recordCtx_.tayBuffer_.position());
@@ -533,6 +536,8 @@ void ValueTape::compare_adolc_ids(const ADOLC_ID &id1, const ADOLC_ID &id2) {
 /* Does the actual reading from the hard disk into the stats buffer */
 /****************************************************************************/
 void ValueTape::read_tape_stats() {
+  using ADOLC::detail::FileDeleter;
+  using ADOLC::detail::fileDeleter;
   using ADOLCError::fail;
   using ADOLCError::FailInfo;
   using ADOLCError::ErrorType::INTEGER_TAPE_FOPEN_FAILED;
@@ -547,8 +552,8 @@ void ValueTape::read_tape_stats() {
 
   ADOLC_ID tape_ADOLC_ID{};
 
-  std::unique_ptr<FILE, decltype(&fclose)> loc_file(fopen(loc_fileName(), "rb"),
-                                                    &fclose);
+  std::unique_ptr<FILE, FileDeleter> loc_file(fopen(loc_fileName(), "rb"),
+                                              fileDeleter);
 
   TapeInfos::StatArray stats{};
   if (loc_file == nullptr ||

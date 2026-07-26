@@ -39,15 +39,6 @@ std::shared_lock<std::shared_mutex> acquireTestAccessLock() {
 
 } // namespace
 
-static_assert(ADOLC::detail::BufferStateType<ADOLC::detail::OpBuffer,
-                                             typename TestOpInfo::value_type>);
-static_assert(ADOLC::detail::BufferStateType<ADOLC::detail::LocBuffer,
-                                             typename TestLocInfo::value_type>);
-static_assert(ADOLC::detail::BufferStateType<ADOLC::detail::ValBuffer,
-                                             typename TestValInfo::value_type>);
-static_assert(ADOLC::detail::BufferStateType<ADOLC::detail::TayBuffer,
-                                             typename TestTayInfo::value_type>);
-
 static_assert(
     ADOLC::detail::InfoType<TestOpInfo, TestRecordingContext, TestErrorType>);
 static_assert(

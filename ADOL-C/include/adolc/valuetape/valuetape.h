@@ -24,6 +24,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
 #include <span>
 #include <stack>
@@ -90,6 +91,7 @@ class ADOLC_API ValueTape {
   };
 
   DataAccessModeGuard accessMode_{DataAccess::Exclusive};
+  bool containsExtDiff_{false};
 
 #define EDFCTS_BLOCK_SIZE 10
   Buffer<ext_diff_fct, EDFCTS_BLOCK_SIZE> ext_buffer_;
@@ -129,6 +131,7 @@ public:
         statsNeedReload_(
             other.statsNeedReload_.exchange(false, std::memory_order_relaxed)),
         accessMode_(other.accessMode_.mode_),
+        containsExtDiff_(other.containsExtDiff_),
         ext_buffer_(std::move(other.ext_buffer_)),
         ext2_buffer_(std::move(other.ext2_buffer_)),
         cp_buffer_(std::move(other.cp_buffer_))
@@ -150,6 +153,7 @@ public:
           other.statsNeedReload_.exchange(false, std::memory_order_relaxed),
           std::memory_order_release);
       accessMode_.mode_ = other.accessMode_.mode_;
+      containsExtDiff_ = other.containsExtDiff_;
       ext_buffer_ = std::move(other.ext_buffer_);
       ext2_buffer_ = std::move(other.ext2_buffer_);
       cp_buffer_ = std::move(other.cp_buffer_);
@@ -168,6 +172,8 @@ public:
     std::shared_lock<std::shared_mutex> lock(accessMode_.mutex_);
     return accessMode_.mode_ == DataAccess::Exclusive;
   }
+  void registerExtDiff() { containsExtDiff_ = true; }
+  bool containsExtDiff() const { return containsExtDiff_; }
 
 private:
   void setMode_(DataAccess mode) {
@@ -178,7 +184,7 @@ private:
     if (accessMode_.mode_ == mode) {
       return;
     }
-    if (this == currentTapePtr()) {
+    if (isRecording()) {
       fail(TAPING_TAPE_STILL_IN_USE, CURRENT_LOCATION,
            FailInfo{.info1 = tapeId()});
     }
@@ -186,7 +192,15 @@ private:
   }
 
 public:
+  /**
+   * @brief Enables concurrent no-keep evaluations of this tape.
+   *
+   * Existing evaluations and recordings must finish before the mode changes.
+   * External differentiated functions are currently unsupported in this mode.
+   */
   void setSharedMode() { setMode_(DataAccess::Shared); }
+
+  /// Restores the default single-evaluation mode with reusable owned buffers.
   void setExclusiveMode() { setMode_(DataAccess::Exclusive); }
 
   void statsNeedReload() {
@@ -748,6 +762,10 @@ private:
   TapeEvaluationContext
   initSweepNoKeep(std::shared_lock<std::shared_mutex> &&dataAccessLock) {
     std::shared_lock<std::shared_mutex> lock(mutex_);
+    if (containsExtDiff_) {
+      ADOLCError::fail(ErrorType::EXT_DIFF_SHARED_MODE, CURRENT_LOCATION,
+                       ADOLCError::FailInfo{.info1 = tapeId()});
+    }
     openTape();
     TapeEvaluationContext evalCtx(recordCtx_, tapeInfos_.stats, std::move(lock),
                                   std::move(dataAccessLock));

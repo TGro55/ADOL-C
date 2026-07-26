@@ -79,11 +79,19 @@ BOOST_AUTO_TEST_CASE(TestEvaluationContextGetTaylorsUsesLocalTaylorBuffer) {
   BOOST_CHECK_EQUAL(ctx.tayBuffer_.position(), size_t{2});
 }
 
-BOOST_AUTO_TEST_CASE(TestEvaluationContextClonesRecordingState) {
+BOOST_AUTO_TEST_CASE(TestEvaluationContextViewsBuffersAndCopiesAuxiliaryData) {
   ADOLC::detail::TapeRecordingContext recordCtx{};
   recordCtx.paramstore = new double[2]{1.0, 2.0};
-  auto buffer = new double[2]{3.0, 4.0};
-  recordCtx.tayBuffer_ = ADOLC::detail::TayBuffer(buffer, 2);
+  auto opBuffer = new unsigned char[2]{1, 2};
+  auto valBuffer = new double[2]{3.0, 4.0};
+  auto locBuffer = new size_t[2]{5, 6};
+  auto tayBuffer = new double[2]{7.0, 8.0};
+  recordCtx.opBuffer_ = ADOLC::detail::OpBuffer(opBuffer, 2);
+  recordCtx.valBuffer_ = ADOLC::detail::ValBuffer(valBuffer, 2);
+  recordCtx.locBuffer_ = ADOLC::detail::LocBuffer(locBuffer, 2);
+  recordCtx.tayBuffer_ = ADOLC::detail::TayBuffer(tayBuffer, 2);
+  recordCtx.opBuffer_.position(1);
+  recordCtx.valBuffer_.numOnTape(2);
   auto oldPtr = recordCtx.paramstore;
 
   TapeInfos::StatArray stats{};
@@ -95,11 +103,26 @@ BOOST_AUTO_TEST_CASE(TestEvaluationContextClonesRecordingState) {
   BOOST_CHECK_EQUAL(recordCtx.paramstore, oldPtr);
   BOOST_CHECK_EQUAL(ctx.paramstore[0], 1.0);
   BOOST_CHECK_EQUAL(ctx.paramstore[1], 2.0);
-  BOOST_REQUIRE_NE(ctx.tayBuffer_.begin(), nullptr);
-  BOOST_CHECK_NE(ctx.tayBuffer_.begin(), buffer);
-  BOOST_CHECK_EQUAL(recordCtx.tayBuffer_.begin(), buffer);
-  BOOST_CHECK_EQUAL(ctx.tayBuffer_.begin()[0], 3.0);
-  BOOST_CHECK_EQUAL(ctx.tayBuffer_.begin()[1], 4.0);
+
+  BOOST_CHECK(!ctx.opBuffer_.isOwner());
+  BOOST_CHECK(!ctx.valBuffer_.isOwner());
+  BOOST_CHECK(!ctx.locBuffer_.isOwner());
+  BOOST_CHECK(!ctx.tayBuffer_.isOwner());
+  BOOST_CHECK_EQUAL(ctx.opBuffer_.begin(), opBuffer);
+  BOOST_CHECK_EQUAL(ctx.valBuffer_.begin(), valBuffer);
+  BOOST_CHECK_EQUAL(ctx.locBuffer_.begin(), locBuffer);
+  BOOST_CHECK_EQUAL(ctx.tayBuffer_.begin(), tayBuffer);
+  BOOST_CHECK_EQUAL(ctx.opBuffer_[0], 1);
+  BOOST_CHECK_EQUAL(ctx.valBuffer_[1], 4.0);
+  BOOST_CHECK_EQUAL(ctx.locBuffer_[0], size_t{5});
+  BOOST_CHECK_EQUAL(ctx.tayBuffer_[1], 8.0);
+
+  BOOST_CHECK_EQUAL(ctx.opBuffer_.position(), size_t{1});
+  ctx.opBuffer_.position(0);
+  BOOST_CHECK_EQUAL(recordCtx.opBuffer_.position(), size_t{1});
+  BOOST_CHECK_EQUAL(ctx.valBuffer_.numOnTape(), size_t{2});
+  ctx.valBuffer_.numOnTape(1);
+  BOOST_CHECK_EQUAL(recordCtx.valBuffer_.numOnTape(), size_t{2});
 }
 
 BOOST_AUTO_TEST_CASE(TestEvaluationContextMoveRetainsReadLock) {
@@ -156,20 +179,68 @@ BOOST_AUTO_TEST_CASE(TestEvaluationContextTaylorBackOpensFileForPriorBlocks) {
   }
 
   TapeRecordingContext tapeCtx;
+  tapeCtx.tayBuffer_ = ADOLC::detail::TayBuffer(new double[2]{3.0, 4.0}, 2);
+  tapeCtx.tayBuffer_.numOnTape(4);
+  tapeCtx.lastTayBlockInCore = 1;
+  auto *sharedBuffer = tapeCtx.tayBuffer_.begin();
   TapeInfos::StatArray stats{};
   EvalContext ctx(tapeCtx, stats, acquireTestReadLock(),
                   acquireTestAccessLock());
-  ctx.tayBuffer_ = ADOLC::detail::TayBuffer(new double[2]{3.0, 4.0}, 2);
-  ctx.tayBuffer_.numOnTape(4);
-  ctx.lastTayBlockInCore = 1;
 
   ctx.taylor_back(2, 1, path.string().c_str());
 
+  BOOST_CHECK(!ctx.tayBuffer_.isOwner());
+  BOOST_CHECK_EQUAL(ctx.tayBuffer_.begin(), sharedBuffer);
   BOOST_CHECK_NE(ctx.tayBuffer_.file(), nullptr);
   BOOST_CHECK_EQUAL(ctx.loadNextReverse<EvalTayInfo>(2), 4.0);
   BOOST_CHECK_EQUAL(ctx.loadNextReverse<EvalTayInfo>(2), 3.0);
+
+  // Crossing the in-core block boundary replaces the view only when the next
+  // block must be loaded. The recording context's final block remains intact.
   BOOST_CHECK_EQUAL(ctx.loadNextReverse<EvalTayInfo>(2), 2.0);
+  BOOST_CHECK(ctx.tayBuffer_.isOwner());
+  BOOST_CHECK_NE(ctx.tayBuffer_.begin(), sharedBuffer);
+  BOOST_CHECK_EQUAL(tapeCtx.tayBuffer_[0], 3.0);
+  BOOST_CHECK_EQUAL(tapeCtx.tayBuffer_[1], 4.0);
   BOOST_CHECK_EQUAL(ctx.loadNextReverse<EvalTayInfo>(2), 1.0);
+
+  ctx.tayBuffer_.closeFile();
+  std::filesystem::remove(path);
+}
+
+BOOST_AUTO_TEST_CASE(TestTaylorBackDetachesAnOutdatedBorrowedBlock) {
+  const auto path = std::filesystem::temp_directory_path() /
+                    "adolc_evalctx_taylor_back_outdated_block.bin";
+  std::filesystem::remove(path);
+
+  {
+    std::FILE *file = std::fopen(path.string().c_str(), "wb");
+    BOOST_REQUIRE_NE(file, nullptr);
+    const double values[4]{1.0, 2.0, 3.0, 4.0};
+    BOOST_REQUIRE_EQUAL(std::fwrite(values, sizeof(double), 4, file),
+                        size_t{4});
+    std::fclose(file);
+  }
+
+  TapeRecordingContext tapeCtx;
+  tapeCtx.tayBuffer_ = ADOLC::detail::TayBuffer(new double[2]{9.0, 10.0}, 2);
+  tapeCtx.tayBuffer_.numOnTape(4);
+  tapeCtx.lastTayBlockInCore = 0;
+  auto *outdatedBuffer = tapeCtx.tayBuffer_.begin();
+
+  TapeInfos::StatArray stats{};
+  EvalContext ctx(tapeCtx, stats, acquireTestReadLock(),
+                  acquireTestAccessLock());
+  BOOST_REQUIRE(!ctx.tayBuffer_.isOwner());
+
+  ctx.taylor_back(2, 1, path.string().c_str());
+
+  BOOST_CHECK(ctx.tayBuffer_.isOwner());
+  BOOST_CHECK_NE(ctx.tayBuffer_.begin(), outdatedBuffer);
+  BOOST_CHECK_EQUAL(ctx.loadNextReverse<EvalTayInfo>(2), 4.0);
+  BOOST_CHECK_EQUAL(ctx.loadNextReverse<EvalTayInfo>(2), 3.0);
+  BOOST_CHECK_EQUAL(tapeCtx.tayBuffer_[0], 9.0);
+  BOOST_CHECK_EQUAL(tapeCtx.tayBuffer_[1], 10.0);
 
   ctx.tayBuffer_.closeFile();
   std::filesystem::remove(path);

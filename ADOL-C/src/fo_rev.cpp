@@ -196,6 +196,7 @@ results   Taylor-Jacobians       ------------          Taylor Jacobians
 #include <adolc/tape_interface.h>
 #include <adolc/valuetape/infotype.h>
 #include <adolc/valuetape/valuetape.h>
+#include <cmath>
 #include <shared_mutex>
 
 #ifdef ADOLC_MEDIPACK_SUPPORT

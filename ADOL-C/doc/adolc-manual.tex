@@ -3156,6 +3156,63 @@ accumulation regression that demonstrates why {\sf nestedReverseEval} must be
 set on the inner tape during reverse callbacks.
 
 %
+\subsection{Parallel evaluation of a shared tape}
+\label{parallel_tape_evaluation}
+%
+By default, a tape uses \emph{exclusive evaluation mode}. This is the normal
+mode for existing applications and requires no changes to user code. One
+evaluation at a time obtains the tape's owned operation, location, value, and
+Taylor buffers. These buffers are returned to the tape after the sweep and are
+reused by later evaluations, preserving the traditional low-allocation
+execution model. If you evaluate a tape which is in exclusive mode in parallel
+the workers evaluate the tape one after another.
+
+Applications that need to evaluate the same tape concurrently can explicitly
+enable \emph{shared evaluation mode}:
+\begin{verbatim}
+  findTape(tapeId).setSharedMode();
+\end{verbatim}
+The mode change waits for active evaluations to finish and must not be made
+while the tape is being recorded. After the change, multiple no-keep sweeps may
+run concurrently on the same tape. Input, output, direction, and adjoint arrays
+remain caller-owned and must be distinct, or otherwise synchronized, between
+threads.
+
+Shared evaluations initially create non-owning views of the tape's in-memory
+buffers. Each evaluation has independent cursor and tape-count state, while
+the underlying buffer data is shared read-only. If a cursor reaches the end of 
+the in-memory block and another block must be read from a tape file, that
+evaluation lazily allocates a private buffer before loading the block. Thus,
+the common in-core case does not copy or allocate the large tape buffers.
+
+A sweep with a nonzero {\sf keep} argument is always exclusive, even when
+shared mode is configured, because it produces Taylor data that must be
+published back to the tape. A typical parallel reverse workflow is therefore:
+\begin{verbatim}
+  // Exclusive keep sweep: prepares and publishes Taylor coefficients.
+  zos_forward(tapeId, m, n, 1, x, y);
+
+  findTape(tapeId).setSharedMode();
+
+  // Different threads may now run no-keep reverse sweeps on this tape.
+  fos_reverse(tapeId, m, n, u, z);
+\end{verbatim}
+The keep sweep waits until existing shared evaluations have completed. Calls
+to {\sf setExclusiveMode()} similarly wait for active evaluations and restore
+the default mode:
+\begin{verbatim}
+  findTape(tapeId).setExclusiveMode();
+\end{verbatim}
+
+Externally differentiated functions, including the v1, indexed v1, and v2
+interfaces, are currently not supported during shared evaluation. Their
+callback descriptors and scratch state are not yet isolated per evaluation.
+ADOL-C rejects such a sweep with an exception before invoking the callback.
+Use exclusive mode for tapes containing external-function operations. Users
+who require parallel evaluation of external functions are encouraged to open
+an issue at \url{https://github.com/coin-or/ADOL-C/issues}.
+
+%
 \subsection{Advanced algorithmic differentiation of time integration processes}
 %
 For many time-dependent applications, the corresponding simulations

@@ -123,7 +123,7 @@ int call_ext_fct(ext_diff_fct *edfct, int n, adouble *xa, int m, adouble *ya) {
   ValueTape &tape = findTape(edfct->tapeId);
 
   tape.put_op(ext_diff);
-
+  tape.registerExtDiff();
   call_ext_fct_commonPrior(edfct, n, xa, m, ya, vals);
   x = myalloc1(to_size_t(n));
   y = myalloc1(to_size_t(m));
@@ -154,6 +154,7 @@ int call_ext_fct(ext_diff_fct *edfct, size_t iArrLength, size_t *iArr, int n,
 
   ValueTape &tape = findTape(edfct->tapeId);
   tape.put_op(ext_diff_iArr, iArrLength + 2);
+  tape.registerExtDiff();
   tape.put_loc(iArrLength);
 
   for (size_t i = 0; i < iArrLength; ++i)

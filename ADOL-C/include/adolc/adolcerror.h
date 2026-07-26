@@ -236,7 +236,9 @@ enum class ErrorType : size_t {
   SPARSE_JAC_MALLOC,
   SPARSE_JAC_NO_BP,
 
-  NOT_IMPLEMENTED
+  NOT_IMPLEMENTED,
+
+  EXT_DIFF_SHARED_MODE
 };
 
 // wrapper for information of errors

@@ -14,6 +14,9 @@ void TapeEvaluationContext::discard_params_r(size_t valueBufferSize,
     ip -= rsize;
     valBuffer_.position(valBuffer_.position() - rsize);
     if (ip > 0) {
+      if (!valBuffer_.isOwner()) {
+        valBuffer_.allocateAndOwn();
+      }
       fseek(valBuffer_.file(),
             static_cast<long>(sizeof(double) *
                               (valBuffer_.numOnTape() - valueBufferSize)),
@@ -62,6 +65,9 @@ void TapeEvaluationContext::taylor_back(size_t taylorBufferSize, short tapeId,
     if (tayBuffer_.file() == nullptr)
       ADOLCError::fail(ADOLCError::ErrorType::TAY_NULLPTR, CURRENT_LOCATION);
 
+    if (!tayBuffer_.isOwner()) {
+      tayBuffer_.allocateAndOwn();
+    }
     if (fseek(tayBuffer_.file(),
               static_cast<long>(sizeof(double) * nextBufferNumber *
                                 taylorBufferSize),

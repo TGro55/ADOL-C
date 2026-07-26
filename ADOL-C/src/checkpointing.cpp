@@ -652,6 +652,7 @@ int Context::checkpointing(short tapeId) {
   // we use direct taping to avoid unnecessary argument copying
 
   tape.put_op(ext_diff);
+  tape.registerExtDiff();
   tape.put_loc(edf->index);
   tape.put_loc(cpInfos->dim);
   tape.put_loc(cpInfos->dim);

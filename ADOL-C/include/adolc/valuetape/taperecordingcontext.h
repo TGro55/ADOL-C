@@ -12,6 +12,21 @@ namespace ADOLC::detail {
 
 struct TapeRecordingContext {
   using StatEntries = TapeInfos::StatEntries;
+  static constexpr StatEntries OP_BUFFER_SIZE = TapeInfos::OP_BUFFER_SIZE;
+  static constexpr StatEntries NUM_OPERATIONS = TapeInfos::NUM_OPERATIONS;
+  static constexpr StatEntries OP_FILE_ACCESS = TapeInfos::OP_FILE_ACCESS;
+
+  static constexpr StatEntries LOC_BUFFER_SIZE = TapeInfos::LOC_BUFFER_SIZE;
+  static constexpr StatEntries NUM_LOCATIONS = TapeInfos::NUM_LOCATIONS;
+  static constexpr StatEntries LOC_FILE_ACCESS = TapeInfos::LOC_FILE_ACCESS;
+
+  static constexpr StatEntries VAL_BUFFER_SIZE = TapeInfos::VAL_BUFFER_SIZE;
+  static constexpr StatEntries NUM_VALUES = TapeInfos::NUM_VALUES;
+  static constexpr StatEntries VAL_FILE_ACCESS = TapeInfos::VAL_FILE_ACCESS;
+
+  static constexpr StatEntries TAY_BUFFER_SIZE = TapeInfos::TAY_BUFFER_SIZE;
+  static constexpr StatEntries NUM_TAYS = TapeInfos::NUM_TAYS;
+
   ~TapeRecordingContext() {
     delete[] signature;
     signature = nullptr;

@@ -7,6 +7,6 @@ install(FILES
         sparseinfos.h
         taperegistry.h
         tapeevaluationcontext.h
-        tapeinfos.h
+        taperecordingcontext.h
         persistanttapeinfos.h
         DESTINATION "include/adolc/valuetape")
