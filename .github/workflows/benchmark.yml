@@ -1,0 +1,77 @@
+name: Benchmark comparison
+
+on:
+  push:
+    branches:
+      - Benchmark
+
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout current branch
+        uses: actions/checkout@v4
+        with:
+          path: current
+
+      - name: Checkout master branch
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          path: master
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++
+
+      - name: Build current branch
+        run: |
+          cmake -S current -B build-current \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=$PWD/install-current
+
+          cmake --build build-current -j$(nproc)
+          cmake --install build-current
+
+      - name: Build master branch
+        run: |
+          cmake -S master -B build-master \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=$PWD/install-master
+
+          cmake --build build-master -j$(nproc)
+          cmake --install build-master
+
+      - name: Build benchmark against current branch
+        run: |
+          g++ current/ADOL-C/benchmark/benchmark.cpp \
+            -std=c++20 \
+            -Iinstall-current/include \
+            -Linstall-current/lib \
+            -Wl,-rpath,$PWD/install-current/lib \
+            -ladolc \
+            -o benchmark-current
+
+      - name: Build benchmark against master
+        run: |
+          g++ current/ADOL-C/benchmark/benchmark.cpp \
+            -std=c++20 \
+            -Iinstall-master/include \
+            -Linstall-master/lib \
+            -Wl,-rpath,$PWD/install-master/lib \
+            -ladolc \
+            -o benchmark-master
+
+      - name: Run current benchmark
+        run: |
+          echo "===== Current branch ====="
+          ./benchmark-current
+
+      - name: Run master benchmark
+        run: |
+          echo "===== Master branch ====="
+          ./benchmark-master
