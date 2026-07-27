@@ -144,16 +144,16 @@ void fail(ErrorType error, source_location LocInfo, const FailInfo &failinfo) {
   case to_underlying(ErrorType::EVAL_SEEK_VALUE_STACK):
     throw ADOLCError("ADOL-C error: in seeking value stack file!\n", LocInfo);
     break;
-  case to_underlying(ErrorType::EVAL_OP_TAPE_READ_FAILED):
+  case to_underlying(ErrorType::OP_READ_FAILED):
     throw ADOLCError("ADOL-C error: while reading operations tape!\n", LocInfo);
     break;
-  case to_underlying(ErrorType::EVAL_VAL_TAPE_READ_FAILED):
+  case to_underlying(ErrorType::VAL_READ_FAILED):
     throw ADOLCError("ADOL-C error: while reading values tape!\n", LocInfo);
     break;
-  case to_underlying(ErrorType::EVAL_LOC_TAPE_READ_FAILED):
+  case to_underlying(ErrorType::LOC_READ_FAILED):
     throw ADOLCError("ADOL-C error: while reading locations tape!\n", LocInfo);
     break;
-  case to_underlying(ErrorType::EVAL_TAY_TAPE_READ_FAILED):
+  case to_underlying(ErrorType::TAY_READ_FAILED):
     throw ADOLCError("ADOL-C error: while reading value stack tape!\n",
                      LocInfo);
     break;
@@ -239,6 +239,16 @@ void fail(ErrorType error, source_location LocInfo, const FailInfo &failinfo) {
         "have contiguous ascending locations; use "
         "ensureContiguousLocations(size_t) to reserve  contiguous blocks "
         "prior to allocation of the arguments.\n",
+        LocInfo);
+    break;
+
+  case to_underlying(ErrorType::EXT_DIFF_SHARED_MODE):
+    throw ADOLCError(
+        "ADOL-C error: external differentiated functions are currently not "
+        "supported while a tape is in shared evaluation mode. Call "
+        "setExclusiveMode() before evaluating this tape. If parallel "
+        "external-function evaluation is required, please open an issue at "
+        "https://github.com/coin-or/ADOL-C/issues.\n",
         LocInfo);
     break;
 

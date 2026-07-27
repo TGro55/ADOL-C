@@ -13,13 +13,22 @@
 #include <adolc/valuetape/globaltapevarscl.h>
 #include <adolc/valuetape/infotype.h>
 #include <adolc/valuetape/persistanttapeinfos.h>
+#include <adolc/valuetape/tapeevaluationcontext.h>
 #include <adolc/valuetape/tapeinfos.h>
+#include <adolc/valuetape/taperecordingcontext.h>
+#include <adolc/valuetape/taperegistry.h>
+#include <atomic>
 #include <cstdarg>
+#include <cstddef>
 #include <cstdio>
 #include <limits>
 #include <memory>
+#include <mutex>
+#include <optional>
+#include <shared_mutex>
 #include <span>
 #include <stack>
+#include <stdexcept>
 #include <type_traits>
 
 // just ignore the missing DLL interface of the class members....
@@ -36,14 +45,15 @@ struct ext_diff_fct;
 struct ext_diff_fct_v2;
 
 using ADOLC::detail::InfoType;
-using ADOLC::detail::InfoTypeBase;
 using ADOLC::detail::LocInfo;
 using ADOLC::detail::OpInfo;
+using ADOLC::detail::TapeEvaluationContext;
+using ADOLC::detail::TapeRecordingContext;
 using ADOLC::detail::ValInfo;
 using ADOLCError::ErrorType;
-using OpInfoT = OpInfo<TapeInfos, ErrorType>;
-using LocInfoT = LocInfo<TapeInfos, ErrorType>;
-using ValInfoT = ValInfo<TapeInfos, ErrorType>;
+using EvalOpInfoT = OpInfo<TapeEvaluationContext, ErrorType>;
+using EvalLocInfoT = LocInfo<TapeEvaluationContext, ErrorType>;
+using EvalValInfoT = ValInfo<TapeEvaluationContext, ErrorType>;
 
 /**
  * class ValueTape
@@ -62,9 +72,26 @@ using ValInfoT = ValInfo<TapeInfos, ErrorType>;
  */
 
 class ADOLC_API ValueTape {
-  TapeInfos tapeInfos_;
+  TapeRecordingContext recordCtx_;
   GlobalTapeVarsCL globalTapeVars_;
+  TapeInfos tapeInfos_;
   PersistantTapeInfos perTapeInfos_;
+  size_t ext_diff_fct_index_{0};
+  std::shared_mutex mutex_;
+  std::atomic<bool> statsNeedReload_{false};
+  std::mutex statsLoadMutex_;
+  std::optional<std::unique_lock<std::shared_mutex>> writeLock_;
+  enum class DataAccess { Exclusive, Shared };
+
+  struct DataAccessModeGuard {
+    std::shared_mutex mutex_;
+    DataAccess mode_{DataAccess::Exclusive};
+
+    explicit DataAccessModeGuard(DataAccess mode) : mode_(mode) {}
+  };
+
+  DataAccessModeGuard accessMode_{DataAccess::Exclusive};
+  bool containsExtDiff_{false};
 
 #define EDFCTS_BLOCK_SIZE 10
   Buffer<ext_diff_fct, EDFCTS_BLOCK_SIZE> ext_buffer_;
@@ -89,17 +116,22 @@ public:
 
   // a tape always need a tapeId,
   ValueTape() = delete;
-  explicit ValueTape(short tapeId)
-      : tapeInfos_(tapeId), perTapeInfos_(tapeId, readConfigFile()) {}
+  explicit ValueTape(short tapeId) : tapeInfos_(tapeId, readConfigFile()) {}
 
   // copying ValueTape is not allowed!
   ValueTape(const ValueTape &other) = delete;
   ValueTape &operator=(const ValueTape &other) = delete;
 
   ValueTape(ValueTape &&other) noexcept
-      : tapeInfos_(std::move(other.tapeInfos_)),
+      : recordCtx_(std::move(other.recordCtx_)),
         globalTapeVars_(std::move(other.globalTapeVars_)),
+        tapeInfos_(std::move(other.tapeInfos_)),
         perTapeInfos_(std::move(other.perTapeInfos_)),
+        ext_diff_fct_index_(other.ext_diff_fct_index_),
+        statsNeedReload_(
+            other.statsNeedReload_.exchange(false, std::memory_order_relaxed)),
+        accessMode_(other.accessMode_.mode_),
+        containsExtDiff_(other.containsExtDiff_),
         ext_buffer_(std::move(other.ext_buffer_)),
         ext2_buffer_(std::move(other.ext2_buffer_)),
         cp_buffer_(std::move(other.cp_buffer_))
@@ -112,9 +144,16 @@ public:
 
   ValueTape &operator=(ValueTape &&other) noexcept {
     if (this != &other) {
+      recordCtx_ = std::move(other.recordCtx_);
       tapeInfos_ = std::move(other.tapeInfos_);
       globalTapeVars_ = std::move(other.globalTapeVars_);
       perTapeInfos_ = std::move(other.perTapeInfos_);
+      ext_diff_fct_index_ = other.ext_diff_fct_index_;
+      statsNeedReload_.store(
+          other.statsNeedReload_.exchange(false, std::memory_order_relaxed),
+          std::memory_order_release);
+      accessMode_.mode_ = other.accessMode_.mode_;
+      containsExtDiff_ = other.containsExtDiff_;
       ext_buffer_ = std::move(other.ext_buffer_);
       ext2_buffer_ = std::move(other.ext2_buffer_);
       cp_buffer_ = std::move(other.cp_buffer_);
@@ -125,6 +164,56 @@ public:
     }
     return *this;
   }
+
+  bool isExclusiveNonLocking() {
+    return accessMode_.mode_ == DataAccess::Exclusive;
+  }
+  bool isExclusiveLocking() {
+    std::shared_lock<std::shared_mutex> lock(accessMode_.mutex_);
+    return accessMode_.mode_ == DataAccess::Exclusive;
+  }
+  void registerExtDiff() { containsExtDiff_ = true; }
+  bool containsExtDiff() const { return containsExtDiff_; }
+
+private:
+  void setMode_(DataAccess mode) {
+    using ADOLCError::fail;
+    using ADOLCError::FailInfo;
+    using ADOLCError::ErrorType::TAPING_TAPE_STILL_IN_USE;
+    std::unique_lock<std::shared_mutex> dataAccessLock(accessMode_.mutex_);
+    if (accessMode_.mode_ == mode) {
+      return;
+    }
+    if (isRecording()) {
+      fail(TAPING_TAPE_STILL_IN_USE, CURRENT_LOCATION,
+           FailInfo{.info1 = tapeId()});
+    }
+    accessMode_.mode_ = mode;
+  }
+
+public:
+  /**
+   * @brief Enables concurrent no-keep evaluations of this tape.
+   *
+   * Existing evaluations and recordings must finish before the mode changes.
+   * External differentiated functions are currently unsupported in this mode.
+   */
+  void setSharedMode() { setMode_(DataAccess::Shared); }
+
+  /// Restores the default single-evaluation mode with reusable owned buffers.
+  void setExclusiveMode() { setMode_(DataAccess::Exclusive); }
+
+  void statsNeedReload() {
+    statsNeedReload_.store(true, std::memory_order_release);
+  }
+
+  std::shared_mutex &accessMutex() noexcept { return mutex_; }
+
+  bool isRecording() const noexcept {
+    return currentTapeStack().back().current == this;
+  }
+  void beginRecording();
+  void endRecording();
 
 #ifdef ADOLC_SPARSE
   // updates the tape infos on sparse Jac or Hess for the given ID
@@ -142,25 +231,39 @@ public:
 
   // Interface to PersistentTapeInfos
   void tapeBaseNames(size_t loc, const std::string &baseName) {
-    perTapeInfos_.tapeBaseNames_[loc] = baseName;
+    tapeInfos_.tapeBaseNames_[loc] = baseName;
   }
   void skipFileCleanup(int skipFileCleanup) {
-    perTapeInfos_.skipFileCleanup = skipFileCleanup;
+    tapeInfos_.skipFileCleanup = skipFileCleanup;
   }
-  int skipFileCleanup() const { return perTapeInfos_.skipFileCleanup; }
-  double *paramstore() const { return perTapeInfos_.paramstore; }
-  void paramstore(double *params) { perTapeInfos_.paramstore = params; }
+  int skipFileCleanup() const { return tapeInfos_.skipFileCleanup; }
 
-  char *tay_fileName() const { return perTapeInfos_.tay_fileName; }
-  char *op_fileName() const { return perTapeInfos_.op_fileName; }
-  char *loc_fileName() const { return perTapeInfos_.loc_fileName; }
-  char *val_fileName() const { return perTapeInfos_.val_fileName; }
-  void tay_fileName(char *name) { perTapeInfos_.tay_fileName = name; }
-  void op_fileName(char *name) { perTapeInfos_.op_fileName = name; }
-  void loc_fileName(char *name) { perTapeInfos_.loc_fileName = name; }
-  void val_fileName(char *name) { perTapeInfos_.val_fileName = name; }
-  int keepTape() const { return perTapeInfos_.keepTape; }
-  void keepTape(int flag) { perTapeInfos_.keepTape = flag; }
+  char *tay_fileName() const {
+    return tapeInfos_.fileNames[TapeInfos::TAYLORS_FILE];
+  }
+  char *op_fileName() const {
+    return tapeInfos_.fileNames[TapeInfos::OPERATIONS_FILE];
+  }
+  char *loc_fileName() const {
+    return tapeInfos_.fileNames[TapeInfos::LOCATIONS_FILE];
+  }
+  char *val_fileName() const {
+    return tapeInfos_.fileNames[TapeInfos::VALUES_FILE];
+  }
+  void tay_fileName(char *name) {
+    tapeInfos_.fileNames[TapeInfos::TAYLORS_FILE] = name;
+  }
+  void op_fileName(char *name) {
+    tapeInfos_.fileNames[TapeInfos::OPERATIONS_FILE] = name;
+  }
+  void loc_fileName(char *name) {
+    tapeInfos_.fileNames[TapeInfos::LOCATIONS_FILE] = name;
+  }
+  void val_fileName(char *name) {
+    tapeInfos_.fileNames[TapeInfos::VALUES_FILE] = name;
+  }
+  int keepTape() const { return tapeInfos_.keepTape; }
+  void keepTape(int flag) { tapeInfos_.keepTape = flag; }
   int jacSolv_nax() const { return perTapeInfos_.jacSolv_nax; }
   int *jacSolv_ci() const { return perTapeInfos_.jacSolv_ci; }
   int *jacSolv_ri() const { return perTapeInfos_.jacSolv_ri; }
@@ -187,7 +290,7 @@ public:
   void forodec_Z(double **Z) { perTapeInfos_.forodec_Z = Z; }
 
   // Interface to TapeInfos
-  void read_params();
+  void readParams(double *&targetStore);
   void compare_adolc_ids(const ADOLC_ID &id1, const ADOLC_ID &id2);
   void read_tape_stats();
   /****************************************************************************/
@@ -221,152 +324,110 @@ public:
     return tapeInfos_.stats;
   }
 
-  void deg_save(int val) { tapeInfos_.deg_save = val; }
-  int deg_save() const { return tapeInfos_.deg_save; }
+  void deg_save(int val) { recordCtx_.deg_save = val; }
+  int deg_save() const { return recordCtx_.deg_save; }
 
-  int keepTaylors() const { return tapeInfos_.keepTaylors; }
-  void keepTaylors(int val) { tapeInfos_.keepTaylors = val; }
+  int keepTaylors() const { return recordCtx_.keepTaylors; }
+  void keepTaylors(int val) { recordCtx_.keepTaylors = val; }
 
   size_t numparam() const { return globalTapeVars_.numparam; }
 
-  void workMode(TapeInfos::WORKMODES mode) { tapeInfos_.workMode = mode; }
-  TapeInfos::WORKMODES workMode() const { return tapeInfos_.workMode; }
-
   void increment_numTays_Tape() {
-    tapeInfos_.tayBuffer_.numOnTape(tapeInfos_.tayBuffer_.numOnTape() + 1);
+    recordCtx_.tayBuffer_.numOnTape(recordCtx_.tayBuffer_.numOnTape() + 1);
   }
   void add_numTays_Tape(size_t val) {
-    tapeInfos_.tayBuffer_.numOnTape(tapeInfos_.tayBuffer_.numOnTape() + val);
+    recordCtx_.tayBuffer_.numOnTape(recordCtx_.tayBuffer_.numOnTape() + val);
   }
 
-  void lastTayBlockInCore(char val) { tapeInfos_.lastTayBlockInCore = val; }
-  char lastTayBlockInCore() const { return tapeInfos_.lastTayBlockInCore; }
+  void lastTayBlockInCore(char val) { recordCtx_.lastTayBlockInCore = val; }
+  char lastTayBlockInCore() const { return recordCtx_.lastTayBlockInCore; }
 
   void decrement_numTays_Tape() {
-    tapeInfos_.tayBuffer_.numOnTape(tapeInfos_.tayBuffer_.numOnTape() - 1);
+    recordCtx_.tayBuffer_.numOnTape(recordCtx_.tayBuffer_.numOnTape() - 1);
   }
 
-  size_t num_eq_prod() const { return tapeInfos_.num_eq_prod; }
-  void num_eq_prod(size_t num) { tapeInfos_.num_eq_prod = num; }
-  void increment_num_eq_prod() { ++(tapeInfos_.num_eq_prod); }
-  void add_num_eq_prod(size_t val) { tapeInfos_.numDeps += val; }
+  size_t num_eq_prod() const { return recordCtx_.num_eq_prod; }
+  void num_eq_prod(size_t num) { recordCtx_.num_eq_prod = num; }
+  void increment_num_eq_prod() { ++(recordCtx_.num_eq_prod); }
+  void add_num_eq_prod(size_t val) { recordCtx_.numDeps += val; }
 
-  void increment_numInds() { ++tapeInfos_.numInds; }
-  size_t numInds() const { return tapeInfos_.numInds; }
+  void increment_numInds() { ++recordCtx_.numInds; }
+  size_t numInds() const { return recordCtx_.numInds; }
 
-  void increment_numDeps() { ++tapeInfos_.numDeps; }
-  size_t numDeps() const { return tapeInfos_.numDeps; }
+  void increment_numDeps() { ++recordCtx_.numDeps; }
+  size_t numDeps() const { return recordCtx_.numDeps; }
 
-  void tay_numInds(size_t val) { tapeInfos_.tay_numInds = val; }
-  size_t tay_numInds() const { return tapeInfos_.tay_numInds; }
+  void tay_numInds(size_t val) { recordCtx_.tay_numInds = val; }
+  size_t tay_numInds() const { return recordCtx_.tay_numInds; }
 
-  void tay_numDeps(size_t val) { tapeInfos_.tay_numDeps = val; }
-  size_t tay_numDeps() const { return tapeInfos_.tay_numDeps; }
+  void tay_numDeps(size_t val) { recordCtx_.tay_numDeps = val; }
+  size_t tay_numDeps() const { return recordCtx_.tay_numDeps; }
 
-  void numSwitches(size_t num) { tapeInfos_.numSwitches = num; }
-  size_t numSwitches() const { return tapeInfos_.numSwitches; }
-  void increment_numSwitches() { ++tapeInfos_.numSwitches; }
+  void numSwitches(size_t num) { recordCtx_.numSwitches = num; }
+  size_t numSwitches() const { return recordCtx_.numSwitches; }
+  void increment_numSwitches() { ++recordCtx_.numSwitches; }
 
   short tapeId() const { return tapeInfos_.tapeId_; }
   size_t no_min_max() { return tapeInfos_.stats[TapeInfos::NO_MIN_MAX]; }
-  size_t ext_diff_fct_index() const { return tapeInfos_.ext_diff_fct_index; }
-  void ext_diff_fct_index(size_t index) {
-    tapeInfos_.ext_diff_fct_index = index;
-  }
+  size_t ext_diff_fct_index() const { return ext_diff_fct_index_; }
+  void ext_diff_fct_index(size_t index) { ext_diff_fct_index_ = index; }
 
-  void nextBufferNumber(size_t num) { tapeInfos_.nextBufferNumber = num; }
-  size_t nextBufferNumber() const { return tapeInfos_.nextBufferNumber; }
-  void decrement_nextBufferNumber() { --tapeInfos_.nextBufferNumber; }
+  void nextBufferNumber(size_t num) { recordCtx_.nextBufferNumber = num; }
+  size_t nextBufferNumber() const { return recordCtx_.nextBufferNumber; }
+  void decrement_nextBufferNumber() { --recordCtx_.nextBufferNumber; }
 
   constexpr static size_t maxLocsPerOp() { return TapeInfos::maxLocsPerOp; }
 
   void put_op(OPCODES op, size_t reserveExtraLocations = 0) {
-    return tapeInfos_.put_op(op, loc_fileName(), op_fileName(), val_fileName(),
+    return recordCtx_.put_op(op, loc_fileName(), op_fileName(), val_fileName(),
                              reserveExtraLocations);
   }
 
-  /* writes a block of operations onto hard disk and handles file creation,
-   * removal, ... */
-  void get_op_block_f() { tapeInfos_.get_op_block_f(); };
-  /* reads the next operations block into the internal buffer */
-  void get_op_block_r() { return tapeInfos_.get_op_block_r(); };
-  /* reads the previous block of operations into the internal buffer */
+  void put_loc(size_t loc) { return recordCtx_.put_loc(loc); };
 
-  /* writes a block of locations onto hard disk and handles file creation,
-   * removal, ... */
-  void get_loc_block_f() { return tapeInfos_.get_loc_block_f(); };
-  /* reads the next block of locations into the internal buffer */
-  void get_loc_block_r() { return tapeInfos_.get_loc_block_r(); };
-  void put_loc(size_t loc) { return tapeInfos_.put_loc(loc); };
-#ifndef ADOLC_HARDDEBUG
-  char get_op_f() { return tapeInfos_.opBuffer_.readAndAdvance(); }
-  char get_op_r() { return tapeInfos_.opBuffer_.retreatAndRead(); }
-  size_t get_locint_f() { return tapeInfos_.locBuffer_.readAndAdvance(); }
-  size_t get_locint_r() { return tapeInfos_.locBuffer_.retreatAndRead(); }
-  double get_val_f() { return tapeInfos_.valBuffer_.readAndAdvance(); }
-  double get_val_r() { return tapeInfos_.valBuffer_.retreatAndRead(); }
-#else
-  unsigned char ValueTape::get_op_f() { return tapeInfos_.get_op_f(); }
-  unsigned char ValueTape::get_op_r() { return tapeInfos_.get_op_r(); }
-  size_t ValueTape::get_size_t_f() { return tapeInfos_.get_size_t_f(); }
-  size_t ValueTape::get_size_t_r() { return tapeInfos_.get_size_t_r(); }
-  double ValueTape::get_val_f() { return tapeInfos_.get_val_f(); }
-  double ValueTape::get_val_r() { return tapeInfos_.get_val_r(); }
-#endif // ADOLC_HARDDEBUG
-  void put_val(const double val) { tapeInfos_.valBuffer_.writeAndAdvance(val); }
+  void put_val(const double val) { recordCtx_.valBuffer_.writeAndAdvance(val); }
   /* puts a single constant into the location buffer, no disk access */
   void put_vals_writeBlock(double *reals, size_t numReals) {
-    return tapeInfos_.put_vals_writeBlock(reals, numReals, op_fileName(),
+    return recordCtx_.put_vals_writeBlock(reals, numReals, op_fileName(),
                                           val_fileName());
   };
   /* fill the constants buffer and write it to disk */
   void put_vals_notWriteBlock(double *reals, size_t numReals) {
-    return tapeInfos_.put_vals_notWriteBlock(reals, numReals);
+    return recordCtx_.put_vals_notWriteBlock(reals, numReals);
   }
 
-  /* writes a block of constants (real) onto hard disk and handles file
-   * creation, removal, ... */
-  void get_val_block_f() { return tapeInfos_.get_val_block_f(); };
-  /* reads the next block of constants into the internal buffer */
-  void get_val_block_r() { return tapeInfos_.get_val_block_r(); };
   /* reads the previous block of constants into the internal buffer */
   size_t get_val_space() {
-    return tapeInfos_.get_val_space(op_fileName(), val_fileName());
+    return recordCtx_.get_val_space(op_fileName(), val_fileName());
   };
-  /* returns the number of free constants in the real tape, ensures that it
-   * is at least 5 */
-  double *get_val_v_f(size_t size) { return tapeInfos_.get_val_v_f(size); }
-  /* return a pointer to the first element of a constants vector
-   * -- Forward Mode -- */
-  double *get_val_v_r(size_t size) { return tapeInfos_.get_val_v_r(size); }
-  /* return a pointer to the first element of a constants vector
-   * -- Reverse Mode -- */
-  /* suspicious function, maybe for vector class - kept for compatibility */
-  void reset_val_r() { return tapeInfos_.reset_val_r(); }
   /* updates */
   int upd_resloc(size_t temp, size_t lhs) {
-    return tapeInfos_.upd_resloc(temp, lhs);
+    return recordCtx_.upd_resloc(temp, lhs);
   }
   int upd_resloc_check(size_t temp) {
-    return tapeInfos_.upd_resloc_check(temp);
+    return recordCtx_.upd_resloc_check(temp);
   }
   int upd_resloc_inc_prod(size_t temp, size_t newlhs, unsigned char newop) {
-    return tapeInfos_.upd_resloc_inc_prod(temp, newlhs, newop);
+    return recordCtx_.upd_resloc_inc_prod(temp, newlhs, newop);
   }
   size_t get_num_param() { return tapeInfos_.stats[TapeInfos::NUM_PARAM]; }
   // Marks reverse evaluation as nested so reverse outputs accumulate on the
   // surrounding tape instead of overwriting its adjoints.
-  void nestedReverseEval(bool flag) { tapeInfos_.nestedReverseEval = flag; }
+  void nestedReverseEval(bool flag) { recordCtx_.nestedReverseEval = flag; }
   // Returns whether reverse evaluation should accumulate into an outer tape.
-  bool nestedReverseEval() const { return tapeInfos_.nestedReverseEval; }
-  double *signature() const { return tapeInfos_.signature; }
-  void signature(double *buffer) { tapeInfos_.signature = buffer; }
+  bool nestedReverseEval() const { return recordCtx_.nestedReverseEval; }
+  double *signature() const { return recordCtx_.signature; }
+  void signature(double *buffer) { recordCtx_.signature = buffer; }
 
   void initTapeInfos_keep();
-  // free all resources used by a tape before overwriting the tape
-  void freeTapeResources() { tapeInfos_.freeTapeResources(); }
   // free/allocate memory for buffers, initialize pointers
-  void initTapeBuffers();
+  template <ADOLC::detail::EvalOrRecordContextType Context>
+  void initTapeBuffers(Context &ctx) {
+    ctx.opBuffer_.allocIfNull(tapestats(TapeInfos::OP_BUFFER_SIZE));
+    ctx.valBuffer_.allocIfNull(tapestats(TapeInfos::VAL_BUFFER_SIZE));
+    ctx.locBuffer_.allocIfNull(tapestats(TapeInfos::LOC_BUFFER_SIZE));
+  }
+  void initTapeBuffers() { initTapeBuffers(recordCtx_); }
 
   //--------------------------------------------------------------
 
@@ -405,19 +466,19 @@ public:
     globalTapeVars_.branchSwitchWarning = 0;
   }
   void enableMinMaxUsingAbs() {
-    if (workMode() != TapeInfos::READ_ACCESS)
-      globalTapeVars_.nominmaxFlag = 1;
-    else
+    if (isRecording())
       ADOLCError::fail(ADOLCError::ErrorType::ENABLE_MINMAX_USING_ABS,
                        CURRENT_LOCATION);
+    std::unique_lock lock(mutex_);
+    globalTapeVars_.nominmaxFlag = 1;
   }
 
   void disableMinMaxUsingAbs() {
-    if (workMode() != TapeInfos::READ_ACCESS)
-      globalTapeVars_.nominmaxFlag = 0;
-    else
+    if (isRecording())
       ADOLCError::fail(ADOLCError::ErrorType::DISABLE_MINMAX_USING_ABS,
                        CURRENT_LOCATION);
+    std::unique_lock lock(mutex_);
+    globalTapeVars_.nominmaxFlag = 0;
   }
 
   // helper for creating contiguous adouble locations
@@ -510,148 +571,37 @@ public:
   // ------------------------------------------- Combined
   /* tries to read a local config file containing, e.g., buffer sizes */
   std::array<std::string, 4> readConfigFile();
-  // ------------------------ set up statics for writing taylor data
-  void taylor_begin(size_t bufferSize, int degreeSave);
+
+  /// @brief Initialize Taylor-stack recording for the current tape.
+  void taylor_begin(int degreeSave);
 
   // close taylor file if necessary and refill buffer if possible
   void finish_tay_file();
   void taylor_close();
-  // initializes a reverse sweep
-  void taylor_back();
-
-  void write_taylor(double *taylorCoefficientPos, std::ptrdiff_t keep) {
-    return tapeInfos_.write_taylor(taylorCoefficientPos, keep, tay_fileName());
-  }
-
-  // writes the block of size depth of taylor coefficients from point loc to
-  // the taylor buffer, if the buffer is filled, then it is written to the
-  // taylor tape
-  void write_taylors(double *taylorCoefficientPos, int keep, int degree,
-                     int numDir) {
-    tapeInfos_.write_taylors(taylorCoefficientPos, keep, degree, numDir,
-                             tay_fileName());
-  }
 
   void write_scaylor(double val) {
-    tapeInfos_.write_scaylor(val, tay_fileName());
+    recordCtx_.write_scaylor(val, tay_fileName());
   }
 
-  // write_scaylors writes #size elements from x to the taylor buffer void
-  void write_scaylors(const double *taylorCoefficientPos, std::ptrdiff_t size) {
-    tapeInfos_.write_scaylors(taylorCoefficientPos, size, tay_fileName());
-  }
   // deletes the last (single) element (x) of the taylor buffer
   void delete_scaylor(size_t loc) {
-    globalTapeVars_.store[loc] = tapeInfos_.tayBuffer_.retreatAndRead();
+    globalTapeVars_.store[loc] = recordCtx_.tayBuffer_.retreatAndRead();
   }
-
-  ///@brief returns current taylor coefficient and advances the stack pointer
-  double get_taylor() { return tapeInfos_.get_taylor(); }
-
-  /*
-   * Puts a block of taylor coefficients from the value stack buffer to the
-   * buffer pointed ty by taylorCoefficients. The buffer is expected to be
-   * contiguous in memory. Use in Higher Order Scalar drivers.
-   */
-  void get_taylors(double *taylorCoefficients, std::ptrdiff_t degree) {
-    tapeInfos_.get_taylors(taylorCoefficients, degree);
-  };
-  /*
-   * Puts a block of taylor coefficients from the value stack buffer to buffer
-   * pointed to by taylorCoefficients. The buffer is expected to be contiguous
-   * in memory. Use in Higher Order Vector drivers.
-   */
-  void get_taylors_p(double *taylorCoefficients, int degree, int numDir) {
-    tapeInfos_.get_taylors_p(taylorCoefficients, degree, numDir);
-  };
-
-  // gets the next (previous block) of the value stack
-  void get_tay_block_r() { return tapeInfos_.get_tay_block_r(); }
 
   /**
    * @brief Return the tape file name associated with the given Info adapter.
    *
-   * Maps an Info type (Op/Loc/Val) to the corresponding per-tape filename
-   * stored in perTapeInfos_. This is used to open the correct backing file for
-   * the current sweep.
-   *
-   * Note:
-   *  - Only OpInfoT, LocInfoT, ValInfoT are supported here.
-   *  - TayInfo is intentionally not part of this dispatch (different
-   * lifecycle).
+   * The index is supplied by the Info adapter so the caller does not branch on
+   * concrete tape kinds.
    */
-  template <InfoType<TapeInfos, ErrorType> Info> const char *fileName() {
-    if constexpr (std::is_same_v<Info, OpInfoT>)
-      return perTapeInfos_.op_fileName;
-    else if constexpr (std::is_same_v<Info, LocInfoT>)
-      return perTapeInfos_.loc_fileName;
-    else if constexpr (std::is_same_v<Info, ValInfoT>)
-      return perTapeInfos_.val_fileName;
-
-    else
-      static_assert(!std::is_same_v<Info, Info>, "Not Implemented!");
+  template <typename Info> const char *fileName() const {
+    return tapeInfos_.fileNames[Info::fileIndex];
   }
 
   /// Simple type list used to run prepare_* for all tape types via
   /// fold-expressions.
   template <typename... Ts> struct AllTypes {};
-  using AllInfoTypes = AllTypes<OpInfoT, LocInfoT, ValInfoT>;
-
-  /**
-   * @brief Read the trailing partial chunk of a block from the tape file.
-   *
-   * readLastBloc() reads full chunks of size Info::chunkSize. If lengthBlock is
-   * not a multiple of chunkSize, this reads the remaining elements at the end.
-   *
-   * Preconditions:
-   *  - Info::file(tapeInfos_) is open and positioned at the start of the block.
-   *  - numChunks == lengthBlock / Info::chunkSize.
-   *
-   * Errors:
-   *  - Fails with Info::error if the fread does not succeed.
-   */
-  template <InfoTypeBase<TapeInfos, ErrorType> Info>
-  void readRemaining(size_t numChunks, size_t lengthBlock) {
-    using ADOLC::detail::read;
-    using ADOLCError::fail;
-    // numChunks + remain = lengthBlock
-    const size_t remain = lengthBlock % Info::chunkSize;
-    if (remain > 0) {
-      auto returnCode =
-          read<TapeInfos, ErrorType, Info>(tapeInfos_, numChunks, lengthBlock);
-      if (returnCode != 1)
-        fail(Info::error, CURRENT_LOCATION);
-    }
-  }
-
-  /**
-   * @brief Read a block (up to lengthBlock elements) from a tape file
-   * into the in-memory buffer.
-   *
-   * Reads lengthBlock elements starting at the current file position into the
-   * buffer (Info::bufferBegin). Data is read in full chunks of Info::chunkSize,
-   * plus an optional trailing partial chunk via readRemaining().
-   *
-   * Preconditions:
-   *  - Info::file(tapeInfos_) is open and positioned at the start of the region
-   *    to read (typically the beginning of "block" on disk).
-   *
-   * Errors:
-   *  - Fails with Info::error if any fread does not succeed.
-   */
-  template <InfoTypeBase<TapeInfos, ErrorType> Info>
-  void readBloc(size_t lengthBlock) {
-    using ADOLC::detail::read;
-    using ADOLCError::fail;
-    const size_t numChunks = lengthBlock / Info::chunkSize;
-    for (size_t chunk = 0; chunk < numChunks; chunk++) {
-      auto returnCode =
-          read<TapeInfos, ErrorType, Info>(tapeInfos_, chunk, Info::chunkSize);
-      if (returnCode != 1)
-        fail(Info::error, CURRENT_LOCATION);
-    }
-    readRemaining<Info>(numChunks, lengthBlock);
-  }
+  using AllInfoTypes = AllTypes<EvalOpInfoT, EvalLocInfoT, EvalValInfoT>;
 
   /**
    * @brief Prepare for a forward sweep.
@@ -663,9 +613,9 @@ public:
    *
    * The logic is:
    *  - optionally read a block into buffer (up to bufferSize)
-   *  - set the remaining element count (Info::num) to what is still left on
-   * disk after the preload
-   *  - initialize the current buffer pointer (Info::curr)
+   *  - set the remaining element count on the selected buffer to what is
+   *    still left on disk after the preload
+   *  - initialize the current buffer position
    *
    * If nothing was written to disk, we assume all data is already in memory
    * and only initialize the counters/pointers accordingly.
@@ -674,31 +624,21 @@ public:
    *  - Loc tape adjusts the current pointer based on statSpace and may trigger
    *    get_loc_block_f() to align buffer state with statistics bookkeeping.
    */
-  template <InfoType<TapeInfos, ErrorType> Info> void prepare_for() {
-    size_t lengthBlock = 0;
+  template <InfoType<TapeEvaluationContext, ErrorType> Info>
+  void prepare_for(TapeEvaluationContext &evalCtx) {
+    size_t blockSize = 0;
+    auto &buffer = Info::getBuffer(evalCtx);
     if (tapestats(Info::fileAccess) == 1) {
-      Info::openFile(tapeInfos_, fileName<Info>());
+      buffer.openFile(fileName<Info>(), "rb");
 
       // preload at most one block, but never more than total elements on tape
-      lengthBlock = std::min(tapestats(Info::bufferSize), tapestats(Info::num));
-      if (lengthBlock != 0) {
-        readBloc<Info>(lengthBlock);
-      }
+      blockSize = std::min(tapestats(Info::bufferSize), tapestats(Info::num));
+      evalCtx.loadBlockIntoBuffer<Info>(blockSize);
       // remaining elements still residing on disk (not yet in buffer)
-      lengthBlock = tapestats(Info::num) - lengthBlock;
+      blockSize = tapestats(Info::num) - blockSize;
     }
-    Info::setNum(tapeInfos_, lengthBlock);
-    if constexpr (std::is_same_v<Info, LocInfoT>) {
-      // location pointer initialization depends on statSpace bookkeeping
-      size_t numLocsForStats = statSpace;
-      while (numLocsForStats >= tapestats(Info::bufferSize)) {
-        get_loc_block_f();
-        numLocsForStats -= tapestats(Info::bufferSize);
-      }
-      Info::setCurr(tapeInfos_, numLocsForStats);
-    } else {
-      Info::setCurr(tapeInfos_, 0);
-    }
+    buffer.numOnTape(blockSize);
+    Info::prepareForwardPosition(evalCtx, tapeInfos_.stats[Info::bufferSize]);
   }
 
   /**
@@ -713,12 +653,14 @@ public:
    * Preconditions:
    *  - tapestats(Info::num) and tapestats(Info::bufferSize) are initialized.
    */
-  template <InfoTypeBase<TapeInfos, ErrorType> Info> void setFilePosition() {
+  template <InfoType<TapeEvaluationContext, ErrorType> Info>
+  void setFilePosition(TapeEvaluationContext &evalCtx) {
     auto number = (tapestats(Info::num) / tapestats(Info::bufferSize)) *
                   tapestats(Info::bufferSize);
     auto offset = static_cast<long>(number * sizeof(typename Info::value_type));
-    Info::openFile(tapeInfos_, fileName<Info>());
-    fseek(Info::file(tapeInfos_), offset, SEEK_SET);
+    auto &buffer = Info::getBuffer(evalCtx);
+    buffer.openFile(fileName<Info>(), "rb");
+    fseek(buffer.file(), offset, SEEK_SET);
   }
 
   /**
@@ -729,27 +671,27 @@ public:
    * partial) final block into the in-memory buffer.
    *
    * After the preload:
-   *  - Info::num is set to the number of elements still remaining on disk
-   *    before the loaded block.
-   *  - Info::curr is set to the end of the loaded region inside the buffer
-   *    (bufferBegin + lengthLB), so reverse logic can walk backwards.
+   *  - the selected buffer stores the number of elements still remaining on
+   *    disk before the loaded block
+   *  - the selected buffer position is moved to the logical end of the loaded
+   *    region so reverse logic can walk backwards
    *
    * If nothing was written to disk, we assume all data is already in memory
    * and only initialize the counters/pointers accordingly.
    */
-  template <InfoType<TapeInfos, ErrorType> Info> void prepare_rev() {
-    size_t lengthLB = tapestats(Info::num);
+  template <InfoType<TapeEvaluationContext, ErrorType> Info>
+  void prepare_rev(TapeEvaluationContext &evalCtx) {
+    size_t blockSize = tapestats(Info::num);
+    auto &buffer = Info::getBuffer(evalCtx);
     if (tapestats(Info::fileAccess) == 1) {
-      setFilePosition<Info>();
+      setFilePosition<Info>(evalCtx);
 
       // size of last (possibly partial) block
-      lengthLB = tapestats(Info::num) % tapestats(Info::bufferSize);
-      if (lengthLB != 0) {
-        readBloc<Info>(lengthLB);
-      }
+      blockSize = tapestats(Info::num) % tapestats(Info::bufferSize);
+      evalCtx.loadBlockIntoBuffer<Info>(blockSize);
     }
-    Info::setNum(tapeInfos_, tapestats(Info::num) - lengthLB);
-    Info::setCurr(tapeInfos_, lengthLB);
+    buffer.numOnTape(tapestats(Info::num) - blockSize);
+    buffer.position(blockSize);
   }
 
   /**
@@ -757,9 +699,12 @@ public:
    *
    * This is just a compile-time loop (fold expression) over the Info types.
    */
-  template <InfoType<TapeInfos, ErrorType>... Infos>
-  void prepare_for_all(AllTypes<Infos...> /*unused*/) {
-    (prepare_for<Infos>(), ...);
+  template <InfoType<TapeEvaluationContext, ErrorType>... Infos>
+  void prepare_for_all(TapeEvaluationContext &evalCtx,
+                       AllTypes<Infos...> /*unused*/)
+    requires(requires { Infos::fileAccess; } && ...)
+  {
+    (prepare_for<Infos>(evalCtx), ...);
   }
 
   /**
@@ -767,9 +712,12 @@ public:
    *
    * This is just a compile-time loop (fold expression) over the Info types.
    */
-  template <InfoType<TapeInfos, ErrorType>... Infos>
-  void prepare_rev_all(AllTypes<Infos...> /*unused*/) {
-    (prepare_rev<Infos>(), ...);
+  template <InfoType<TapeEvaluationContext, ErrorType>... Infos>
+  void prepare_rev_all(TapeEvaluationContext &evalCtx,
+                       AllTypes<Infos...> /*unused*/)
+    requires(requires { Infos::fileAccess; } && ...)
+  {
+    (prepare_rev<Infos>(evalCtx), ...);
   }
 
   /// Tag types selecting sweep direction for init_sweep().
@@ -777,6 +725,55 @@ public:
   struct Forward : Mode {};
   struct Reverse : Mode {};
 
+private:
+  template <typename Mode> void prepareSweep(TapeEvaluationContext &evalCtx) {
+    using namespace ADOLC::detail;
+
+    initTapeBuffers(evalCtx);
+    if (tapestats(TapeInfos::NUM_PARAM) > 0 && evalCtx.paramstore == nullptr)
+      readParams(evalCtx.paramstore);
+    if constexpr (std::is_same_v<Mode, Forward>) {
+      prepare_for_all(evalCtx, AllInfoTypes{});
+#ifdef ADOLC_AMPI_SUPPORT
+      TAPE_AMPI_resetBottom();
+#endif
+    } else if constexpr (std::is_same_v<Mode, Reverse>) {
+      prepare_rev_all(evalCtx, AllInfoTypes{});
+#ifdef ADOLC_AMPI_SUPPORT
+      TAPE_AMPI_resetTop();
+#endif
+    } else {
+      static_assert(!std::is_same_v<Mode, Mode>, "Mode not implemented!");
+    }
+  }
+
+  template <typename Mode>
+  TapeEvaluationContext
+  initSweepKeep(std::shared_lock<std::shared_mutex> &&dataAccessLock) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    openTape();
+    TapeEvaluationContext evalCtx(std::move(recordCtx_), std::move(lock),
+                                  std::move(dataAccessLock));
+    prepareSweep<Mode>(evalCtx);
+    return evalCtx;
+  }
+
+  template <typename Mode>
+  TapeEvaluationContext
+  initSweepNoKeep(std::shared_lock<std::shared_mutex> &&dataAccessLock) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    if (containsExtDiff_) {
+      ADOLCError::fail(ErrorType::EXT_DIFF_SHARED_MODE, CURRENT_LOCATION,
+                       ADOLCError::FailInfo{.info1 = tapeId()});
+    }
+    openTape();
+    TapeEvaluationContext evalCtx(recordCtx_, tapeInfos_.stats, std::move(lock),
+                                  std::move(dataAccessLock));
+    prepareSweep<Mode>(evalCtx);
+    return evalCtx;
+  }
+
+public:
   /**
    * @brief Initialize a tape sweep.
    *
@@ -794,28 +791,17 @@ public:
    *
    * @tparam Mode Sweep direction selector. Must be either Forward or Reverse.
    */
-  template <class Mode> void init_sweep() {
-    using namespace ADOLC::detail;
-    /* make room for tapeInfos and read tape stats if necessary, keep value
-     * stack information */
-    openTape();
-    initTapeBuffers();
-    if constexpr (std::is_same_v<Mode, Forward>) {
-      prepare_for_all(AllInfoTypes{});
-#ifdef ADOLC_AMPI_SUPPORT
-      TAPE_AMPI_resetBottom();
-#endif
-    } else if constexpr (std::is_same_v<Mode, Reverse>) {
-      prepare_rev_all(AllInfoTypes{});
-#ifdef ADOLC_AMPI_SUPPORT
-      TAPE_AMPI_resetTop();
-#endif
+  template <typename Mode> TapeEvaluationContext init_sweep(int keep = 0) {
+    std::shared_lock<std::shared_mutex> lock(accessMode_.mutex_);
+    if (keep || accessMode_.mode_ == DataAccess::Exclusive) {
+      return initSweepKeep<Mode>(std::move(lock));
     } else {
-      static_assert(!std::is_same_v<Mode, Mode>, "Mode not implemented!");
+      return initSweepNoKeep<Mode>(std::move(lock));
     }
   }
   // finish a forward or reverse sweep
-  void end_sweep();
+  void end_sweep(TapeEvaluationContext &evalCtx);
+  void end_sweep(TapeEvaluationContext &&evalCtx);
   // initialization for the taping process -> buffer allocation, sets files
   // names, and calls appropriate setup routines
   void start_trace();
@@ -848,10 +834,6 @@ public:
   // close open tapes, update stats and clean up
   void close_tape(int flag);
 
-  /****************************************************************************/
-  /* Discards parameters from the end of value tape during reverse mode */
-  /****************************************************************************/
-  void discard_params_r();
   /**
    * @brief Update parameter values used by subsequent evaluations.
    *

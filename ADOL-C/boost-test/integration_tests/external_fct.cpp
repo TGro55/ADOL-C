@@ -5,6 +5,7 @@
 #include <cmath>
 #include <functional>
 #include <span>
+#include <string>
 #include <vector>
 
 /**
@@ -1047,6 +1048,42 @@ BOOST_AUTO_TEST_CASE(ManualExternalCallbacksMatchAnalyticReference) {
 /** Verifies that nestedReverseEval must be enabled on the inner tape. */
 BOOST_AUTO_TEST_CASE(NestedReverseAccumulationRequiresInnerTapeFlag) {
   checkNestedReverseAccumulation(scalarExample);
+}
+
+BOOST_AUTO_TEST_CASE(SharedEvaluationRejectsExternalFunctions) {
+  const TapeSet tapes = createStandardProblemTapes(linearExample);
+  auto &outerTape = findTape(tapes.wExternTapeId);
+  std::vector<double> y(linearExample.m, 0.0);
+  const auto isSharedExternalFunctionError =
+      [](const ADOLCError::ADOLCError &error) {
+        const std::string message = error.what();
+        return message.find("external differentiated functions") !=
+                   std::string::npos &&
+               message.find("setExclusiveMode()") != std::string::npos &&
+               message.find("github.com/coin-or/ADOL-C/issues") !=
+                   std::string::npos;
+      };
+
+  outerTape.setSharedMode();
+  BOOST_CHECK_EXCEPTION(zos_forward(tapes.wExternTapeId, linearExample.m,
+                                    linearExample.n, 0, linearExample.x.data(),
+                                    y.data()),
+                        ADOLCError::ADOLCError, isSharedExternalFunctionError);
+
+  outerTape.setExclusiveMode();
+  BOOST_CHECK_GE(zos_forward(tapes.wExternTapeId, linearExample.m,
+                             linearExample.n, 1, linearExample.x.data(),
+                             y.data()),
+                 0);
+
+  std::vector<double> weights(linearExample.m, 1.0);
+  std::vector<double> gradient(linearExample.n, 0.0);
+  outerTape.setSharedMode();
+  BOOST_CHECK_EXCEPTION(fos_reverse(tapes.wExternTapeId, linearExample.m,
+                                    linearExample.n, weights.data(),
+                                    gradient.data()),
+                        ADOLCError::ADOLCError, isSharedExternalFunctionError);
+  outerTape.setExclusiveMode();
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -24,7 +24,7 @@ pdouble::pdouble(const double pval) { value(pval); }
 pdouble::operator adouble() const {
   ValueTape &tape = currentTape();
   adouble ret_adouble;
-  if (tape.workMode() == TapeInfos::WRITE_ACCESS) {
+  if (tape.isRecording()) {
     tape.put_op(assign_p);
     tape.put_loc(loc());
     tape.put_loc(ret_adouble.loc());

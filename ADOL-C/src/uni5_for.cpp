@@ -37,9 +37,14 @@ and _NTIGHT__
 #include <adolc/internal/common.h>
 #include <adolc/oplate.h>
 #include <adolc/tape_interface.h>
+#include <adolc/valuetape/infotype.h>
 #include <adolc/valuetape/valuetape.h>
 #include <math.h>
+#include <mutex>
+#include <shared_mutex>
 #include <string.h>
+#include <type_traits>
+#include <utility>
 
 #if defined(ADOLC_DEBUG) || defined(_ZOS_)
 #include <string.h>
@@ -229,16 +234,17 @@ END_C_DECLS
 #define IF_KEEP_TAYLOR_CLOSE                                                   \
   if (keep) {                                                                  \
     fprintf(DIAG_OUT, "Succeeding reverse sweep will tape.fail!\n");           \
-    tape.finish_tay_file();                                                    \
+    evalCtx.finish_tay_file(tape.tay_fileName());                              \
   }
 // clang-format off
 #define IF_KEEP_WRITE_TAYLOR(res, keep, k, p)                                  \
   {                                                                            \
     UPDATE_TAYLORWRITTEN(keep * k * p)                                         \
     if (keep) {                                                                \
-      tape.write_scaylor(dp_T0[res]);                                          \
+      evalCtx.write_scaylor(dp_T0[res], tape.tay_fileName());                  \
       if (keep > 1)                                                            \
-        tape.write_taylors(dpp_T[res], (keep - 1), k, p);                             \
+        evalCtx.write_taylors(dpp_T[res], (keep - 1), k, p,                    \
+                              tape.tay_fileName());                            \
     }                                                                          \
   }
 // clang-format on
@@ -250,14 +256,14 @@ END_C_DECLS
 #define IF_KEEP_TAYLOR_CLOSE                                                   \
   if (keep) {                                                                  \
     fprintf(DIAG_OUT, "Otherwise succeeding reverse sweep will tape.fail!\n"); \
-    tape.finish_tay_file();                                                    \
+    evalCtx.finish_tay_file(tape.tay_fileName());                              \
   }
 #if defined(_ZOS_)
 #define IF_KEEP_WRITE_TAYLOR(res, keep, k, p)                                  \
   {                                                                            \
     UPDATE_TAYLORWRITTEN(keep)                                                 \
     if (keep)                                                                  \
-      tape.write_scaylor(dp_T0[res]);                                          \
+      evalCtx.write_scaylor(dp_T0[res], tape.tay_fileName());                  \
   }
 #else
 #if defined(_FOS_)
@@ -265,9 +271,9 @@ END_C_DECLS
   {                                                                            \
     UPDATE_TAYLORWRITTEN(keep)                                                 \
     if (keep) {                                                                \
-      tape.write_scaylor(dp_T0[res]);                                          \
+      evalCtx.write_scaylor(dp_T0[res], tape.tay_fileName());                  \
       if (keep > 1)                                                            \
-        tape.write_scaylor(dp_T[res]);                                         \
+        evalCtx.write_scaylor(dp_T[res], tape.tay_fileName());                 \
     }                                                                          \
   }
 #else
@@ -276,9 +282,9 @@ END_C_DECLS
   {                                                                            \
     UPDATE_TAYLORWRITTEN(keep)                                                 \
     if (keep) {                                                                \
-      tape.write_scaylor(dp_T0[res]);                                          \
+      evalCtx.write_scaylor(dp_T0[res], tape.tay_fileName());                  \
       if (keep > 1)                                                            \
-        tape.write_taylor(dpp_T[res], keep - 1);                               \
+        evalCtx.write_taylor(dpp_T[res], keep - 1, tape.tay_fileName());       \
     }                                                                          \
   }
 #endif
@@ -829,6 +835,9 @@ int hov_forward(
 #endif
 #endif
 {
+  using ValInfo = ADOLC::detail::ValInfo<TapeEvaluationContext, ErrorType>;
+  using LocInfo = ADOLC::detail::LocInfo<TapeEvaluationContext, ErrorType>;
+  using OpInfo = ADOLC::detail::OpInfo<TapeEvaluationContext, ErrorType>;
   ValueTape &tape = findTape(tnum);
   /****************************************************************************/
   /*                                                            ALL VARIABLES */
@@ -1090,10 +1099,12 @@ int hov_forward(
   /****************************************************************************/
   /*                                                                    INITs */
 
-  /* Set up stuff for the tape */
-
+#if defined _KEEP_
+  auto evalCtx = tape.init_sweep<ValueTape::Forward>(keep);
+#else
+  auto evalCtx = tape.init_sweep<ValueTape::Forward>();
+#endif // _KEEP_
   /* Initialize the Forward Sweep */
-  tape.init_sweep<ValueTape::Forward>();
 
   if ((to_size_t(depcheck) != tape.tapestats(TapeInfos::NUM_DEPENDENTS)) ||
       (to_size_t(indcheck) != tape.tapestats(TapeInfos::NUM_INDEPENDENTS)))
@@ -1130,11 +1141,11 @@ int hov_forward(
   dp_T0 = myalloc1(tape.tapestats(TapeInfos::NUM_MAX_LIVES));
 
   if (tape.tapestats(TapeInfos::NO_MIN_MAX)) {
-    if (tape.signature()) {
-      delete[] tape.signature();
-      tape.signature(nullptr);
+    if (evalCtx.signature) {
+      delete[] evalCtx.signature;
+      evalCtx.signature = nullptr;
     }
-    tape.signature(new double[tape.tapestats(TapeInfos::NUM_SWITCHES)]);
+    evalCtx.signature = new double[tape.tapestats(TapeInfos::NUM_SWITCHES)];
   }
 #endif             /* !_NTIGHT_ */
 #if defined(_ZOS_) /* ZOS */
@@ -1145,9 +1156,8 @@ int hov_forward(
 #endif
 #if defined(_KEEP_)
   if (keep) {
-    const size_t taylbuf = tape.tapestats(TapeInfos::TAY_BUFFER_SIZE);
-
-    tape.taylor_begin(taylbuf, keep - 1);
+    evalCtx.taylor_begin(keep - 1, tape.tapestats(TapeInfos::TAY_BUFFER_SIZE),
+                         tape.tay_fileName());
   }
 #endif
 
@@ -1163,8 +1173,8 @@ int hov_forward(
 #define TAYLOR_BUFFER dp_T
 #if defined(_KEEP_)
   if (keep) {
-    const size_t taylbuf = tape.tapestats(TapeInfos::TAY_BUFFER_SIZE);
-    tape.taylor_begin(taylbuf, keep - 1);
+    evalCtx.taylor_begin(keep - 1, tape.tapestats(TapeInfos::TAY_BUFFER_SIZE),
+                         tape.tay_fileName());
   }
 #endif
 
@@ -1233,8 +1243,8 @@ int hov_forward(
 #define T_TEMP dp_Ttemp;
 #if defined(_KEEP_)
   if (keep) {
-    const size_t taylbuf = tape.tapestats(TapeInfos::TAY_BUFFER_SIZE);
-    tape.taylor_begin(taylbuf, keep - 1);
+    evalCtx.taylor_begin(keep - 1, tape.tapestats(TapeInfos::TAY_BUFFER_SIZE),
+                         tape.tay_fileName());
   }
 #endif
 
@@ -1247,8 +1257,8 @@ int hov_forward(
 #define T_TEMP dp_Ttemp;
 #if defined(_KEEP_)
   if (keep) {
-    const size_t taylbuf = tape.tapestats(TapeInfos::TAY_BUFFER_SIZE);
-    tape.taylor_begin(taylbuf, keep - 1);
+    evalCtx.taylor_begin(keep - 1, tape.tapestats(TapeInfos::TAY_BUFFER_SIZE),
+                         tape.tay_fileName());
   }
 #endif
 #endif
@@ -1271,7 +1281,7 @@ int hov_forward(
 #define UPDATE_TAYLORWRITTEN(X)
 #endif /* ADOLC_DEBUG */
 
-  operation = tape.get_op_f();
+  operation = evalCtx.loadNextForward<OpInfo>();
 #if defined(ADOLC_DEBUG)
   ++countPerOperation[operation];
 #endif /* ADOLC_DEBUG */
@@ -1286,19 +1296,22 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case end_of_op: /* end_of_op */
-      tape.get_op_block_f();
-      operation = tape.get_op_f();
+      evalCtx.loadBlockIntoBufferForward<OpInfo>(
+          tape.tapestats(OpInfo::bufferSize));
+      operation = evalCtx.loadNextForward<OpInfo>();
       /* Skip next operation, it's another end_of_op */
       break;
 
       /*--------------------------------------------------------------------------*/
     case end_of_int: /* end_of_int */
-      tape.get_loc_block_f();
+      evalCtx.loadBlockIntoBufferForward<LocInfo>(
+          tape.tapestats(LocInfo::bufferSize));
       break;
 
       /*--------------------------------------------------------------------------*/
     case end_of_val: /* end_of_val */
-      tape.get_val_block_f();
+      evalCtx.loadBlockIntoBufferForward<ValInfo>(
+          tape.tapestats(ValInfo::bufferSize));
       break;
       /*--------------------------------------------------------------------------*/
     case start_of_tape: /* start_of_tape */
@@ -1311,7 +1324,7 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case eq_zero: /* eq_zero */
-      arg = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
       if (dp_T0[arg] != 0) {
@@ -1330,7 +1343,7 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case neq_zero: /* neq_zero */
-      arg = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
       if (dp_T0[arg] == 0) {
@@ -1348,7 +1361,7 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case le_zero: /* le_zero */
-      arg = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
       if (dp_T0[arg] > 0) {
@@ -1368,7 +1381,7 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case gt_zero: /* gt_zero */
-      arg = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
       if (dp_T0[arg] <= 0) {
@@ -1386,7 +1399,7 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case ge_zero: /* ge_zero */
-      arg = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
       if (dp_T0[arg] < 0) {
@@ -1406,7 +1419,7 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case lt_zero: /* lt_zero */
-      arg = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
       if (dp_T0[arg] >= 0) {
@@ -1429,8 +1442,8 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case assign_a: /* assign an adouble variable an    assign_a */
       /* adouble value. (=) */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1458,11 +1471,11 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case assign_d: /* assign an adouble variable a    assign_d */
       /* double value. (=) */
-      res = tape.get_locint_f();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1492,10 +1505,10 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case assign_p: /* assign an adouble variable a    assign_d */
       /* double value. (=) */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
-      coval = tape.paramstore()[arg];
+      coval = evalCtx.paramstore[arg];
 #endif
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
@@ -1526,7 +1539,7 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case assign_d_zero: /* assign an adouble variable a    assign_d_zero */
       /* double value. (0) (=) */
-      res = tape.get_locint_f();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1556,7 +1569,7 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case assign_d_one: /* assign an adouble variable a    assign_d_one */
       /* double value. (1) (=) */
-      res = tape.get_locint_f();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1587,7 +1600,7 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case assign_ind: /* assign an adouble variable an    assign_ind */
       /* independent double value (<<=) */
-      res = tape.get_locint_f();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1623,7 +1636,7 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case assign_dep: /* assign a float variable a    assign_dep */
       /* dependent adouble value. (>>=) */
-      res = tape.get_locint_f();
+      res = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_INDO_) && !defined(_NTIGHT_)
       if (valuepoint != nullptr)
@@ -1671,11 +1684,11 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case eq_plus_d: /* Add a floating point to an    eq_plus_d */
       /* adouble. (+=) */
-      res = tape.get_locint_f();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1687,8 +1700,8 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case eq_plus_a: /* Add an adouble to another    eq_plus_a */
       /* adouble. (+=) */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1723,11 +1736,11 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case eq_min_d: /* Subtract a floating point from an    eq_min_d */
       /* adouble. (-=) */
-      res = tape.get_locint_f();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1739,8 +1752,8 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case eq_min_a: /* Subtract an adouble from another    eq_min_a */
       /* adouble. (-=) */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1775,11 +1788,11 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case eq_mult_d: /* Multiply an adouble by a    eq_mult_d */
       /* floating point. (*=) */
-      res = tape.get_locint_f();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1802,8 +1815,8 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case eq_mult_a: /* Multiply one adouble by another    eq_mult_a */
       /* (*=) */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1856,7 +1869,7 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case incr_a: /* Increment an adouble    incr_a */
-      res = tape.get_locint_f();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1867,7 +1880,7 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case decr_a: /* Increment an adouble    decr_a */
-      res = tape.get_locint_f();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1882,9 +1895,9 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case plus_a_a: /* : Add two adoubles. (+)    plus a_a */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1920,12 +1933,12 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case plus_d_a: /* Add an adouble and a double    plus_d_a */
       /* (+) */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1953,9 +1966,9 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case min_a_a: /* Subtraction of two adoubles     min_a_a */
       /* (-) */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -1991,12 +2004,12 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case min_d_a: /* Subtract an adouble from a    min_d_a */
       /* double (-) */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -2027,9 +2040,9 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case mult_a_a: /* Multiply two adoubles (*)    mult_a_a */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -2087,9 +2100,9 @@ int hov_forward(
       /* olvo 991122: new op_code with recomputation */
     case eq_plus_prod: /* increment a product of           eq_plus_prod */
       /* two adoubles (*) */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
 #if defined(_INDO_)
 #if defined(_INDOPRO_)
@@ -2153,9 +2166,9 @@ int hov_forward(
       /* olvo 991122: new op_code with recomputation */
     case eq_min_prod: /* decrement a product of            eq_min_prod */
       /* two adoubles (*) */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
 #if defined(_INDO_)
 #if defined(_INDOPRO_)
@@ -2219,12 +2232,12 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case mult_d_a: /* Multiply an adouble by a double    mult_d_a */
       /* (*) */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -2256,9 +2269,9 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case div_a_a: /* Divide an adouble by an adouble    div_a_a */
       /* (/) */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -2321,12 +2334,12 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case div_d_a: /* Division double - adouble (/)    div_d_a */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -2389,8 +2402,8 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case pos_sign_a: /* pos_sign_a */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -2417,8 +2430,8 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case neg_sign_a: /* neg_sign_a */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -2453,8 +2466,8 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case exp_op: /* exponent operation    exp_op */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -2511,9 +2524,9 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case sin_op: /* sine operation    sin_op */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(arg2, keep, k, p) /* olvo 980710 covalue */
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
@@ -2583,9 +2596,9 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case cos_op: /* cosine operation    cos_op */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(arg2, keep, k, p) /* olvo 980710 covalue */
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
@@ -2656,9 +2669,9 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case atan_op: /* atan_op */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -2717,9 +2730,9 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case asin_op: /* asin_op */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -2817,9 +2830,9 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case acos_op: /* acos_op */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -2917,9 +2930,9 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case asinh_op: /* asinh_op */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -2978,9 +2991,9 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case acosh_op: /* acosh_op */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -3063,9 +3076,9 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case atanh_op: /* atanh_op */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -3170,9 +3183,9 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case erf_op: /* erf_op */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -3228,9 +3241,9 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case erfc_op: /* erf_op */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -3286,8 +3299,8 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case log_op: /* log_op */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -3352,13 +3365,13 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case pow_op: /* pow_op */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -3492,8 +3505,8 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case sqrt_op: /* sqrt_op */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -3574,8 +3587,8 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case cbrt_op: /* cbrt_op */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -3645,24 +3658,14 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case gen_quad: /* gen_quad */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
-
-#if !defined(_NTIGHT_)
-      if (tape.get_val_f() != dp_T0[arg1]) {
-        fprintf(DIAG_OUT,
-                "ADOL-C Warning: forward sweep aborted; tape invalid!\n");
-        IF_KEEP_TAYLOR_CLOSE
-        tape.end_sweep();
-        return -2;
-      }
-#endif /* !_NTIGHT_ */
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -3670,12 +3673,7 @@ int hov_forward(
       dp_T0[res] = coval;
 #endif /* !_NTIGHT_ */
 
-#if defined(_INDO_)
-      fprintf(DIAG_OUT, "ADOL-C Warning: forward sweep aborted; sparse mode "
-                        "not available for gen_quad!\n");
-      tape.end_sweep();
-      return -2;
-#else
+#if !defined(_INDO_)
 #if !defined(_ZOS_) /* BREAK_ZOS */
       ASSIGN_T(Tres, TAYLOR_BUFFER[res])
       ASSIGN_T(Targ1, TAYLOR_BUFFER[arg1])
@@ -3712,13 +3710,13 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case min_op: /* min_op */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -3870,12 +3868,12 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case abs_val: /* abs_val */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -3891,7 +3889,7 @@ int hov_forward(
           MINDEC(ret_c, 2);
       }
 #if defined(_ABS_NORM_) || defined(_ABS_NORM_SIG_)
-      tape.signature()[switchnum] = dp_T0[arg];
+      evalCtx.signature[switchnum] = dp_T0[arg];
       swargs[switchnum] = dp_T0[arg];
 #endif
 #endif /* !_NTIGHT_ */
@@ -3994,12 +3992,12 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case ceil_op: /* ceil_op */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -4032,12 +4030,12 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case floor_op: /* Compute ceil of adouble    floor_op */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -4074,14 +4072,14 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case cond_assign: /* cond_assign */
-      arg = tape.get_locint_f();
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -4139,7 +4137,7 @@ int hov_forward(
 
 #ifdef _INT_FOR_
 #ifdef _TIGHT_
-      coval = tape.get_val_f();
+      coval = evalCtx.loadNextForward<ValInfo>();
 
       if (dp_T0[arg] > 0)
         FOR_0_LE_l_LT_pk TRES_INC = TARG1_INC;
@@ -4185,14 +4183,14 @@ int hov_forward(
       break;
 
     case cond_eq_assign: /* cond_eq_assign */
-      arg = tape.get_locint_f();
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -4246,7 +4244,7 @@ int hov_forward(
 
 #ifdef _INT_FOR_
 #ifdef _TIGHT_
-      coval = tape.get_val_f();
+      coval = evalCtx.loadNextForward<ValInfo>();
 
       if (dp_T0[arg] >= 0)
         FOR_0_LE_l_LT_pk TRES_INC = TARG1_INC;
@@ -4289,13 +4287,13 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case cond_assign_s: /* cond_assign_s */
-      arg = tape.get_locint_f();
-      arg1 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -4320,7 +4318,7 @@ int hov_forward(
 
 #ifdef _INT_FOR_
 #ifdef _TIGHT_
-      coval = tape.get_val_f();
+      coval = evalCtx.loadNextForward<ValInfo>();
 
       if (dp_T0[arg] > 0)
 #endif /* _TIGHT_ */
@@ -4350,13 +4348,13 @@ int hov_forward(
       break;
 
     case cond_eq_assign_s: /* cond_eq_assign_s */
-      arg = tape.get_locint_f();
-      arg1 = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p)
 
@@ -4381,7 +4379,7 @@ int hov_forward(
 
 #ifdef _INT_FOR_
 #ifdef _TIGHT_
-      coval = tape.get_val_f();
+      coval = evalCtx.loadNextForward<ValInfo>();
 
       if (dp_T0[arg] >= 0)
 #endif /* _TIGHT_ */
@@ -4421,10 +4419,10 @@ int hov_forward(
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
-      arg = tape.get_locint_f();
-      arg1 = tape.get_locint_f();
-      res = tape.get_locint_f();
+          evalCtx.loadNextForward<ValInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       {
         revreal retval = -1;
@@ -4491,16 +4489,16 @@ int hov_forward(
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
-      arg = tape.get_locint_f();
+          evalCtx.loadNextForward<ValInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
       {
 #if !defined(_NTIGHT_)
         size_t idx, numvar = (size_t)trunc(fabs(coval));
         locint vectorloc;
         vectorloc =
 #endif
-            tape.get_locint_f();
-        res = tape.get_locint_f();
+            evalCtx.loadNextForward<LocInfo>();
+        res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
         idx = (size_t)trunc(fabs(dp_T0[arg]));
         if (idx >= numvar)
@@ -4535,16 +4533,16 @@ int hov_forward(
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
-      arg = tape.get_locint_f();
+          evalCtx.loadNextForward<ValInfo>();
+      arg = evalCtx.loadNextForward<LocInfo>();
       {
 #if !defined(_NTIGHT_)
         size_t idx, numvar = (size_t)trunc(fabs(coval));
         locint vectorloc;
         vectorloc =
 #endif
-            tape.get_locint_f();
-        res = tape.get_locint_f();
+            evalCtx.loadNextForward<LocInfo>();
+        res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
         idx = (size_t)trunc(fabs(dp_T0[arg]));
         if (idx >= numvar)
@@ -4561,8 +4559,8 @@ int hov_forward(
       break;
 
     case ref_copyout:
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       arg1 = (size_t)trunc(fabs(dp_T0[arg]));
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p);
@@ -4588,7 +4586,7 @@ int hov_forward(
       break;
 
     case ref_incr_a:
-      arg = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       arg1 = (size_t)trunc(fabs(dp_T0[arg]));
       IF_KEEP_WRITE_TAYLOR(arg1, keep, k, p);
@@ -4599,7 +4597,7 @@ int hov_forward(
       break;
 
     case ref_decr_a:
-      arg = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       arg1 = (size_t)trunc(fabs(dp_T0[arg]));
       IF_KEEP_WRITE_TAYLOR(arg1, keep, k, p);
@@ -4610,11 +4608,11 @@ int hov_forward(
       break;
 
     case ref_assign_d:
-      arg = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
 #if !defined(_NTIGHT_)
       arg1 = (size_t)trunc(fabs(dp_T0[arg]));
@@ -4643,7 +4641,7 @@ int hov_forward(
       break;
 
     case ref_assign_d_zero:
-      arg = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
       arg1 = (size_t)trunc(fabs(dp_T0[arg]));
@@ -4672,7 +4670,7 @@ int hov_forward(
       break;
 
     case ref_assign_d_one:
-      arg = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
       arg1 = (size_t)trunc(fabs(dp_T0[arg]));
@@ -4702,8 +4700,8 @@ int hov_forward(
 
     case ref_assign_a: /* assign an adouble variable an    assign_a */
       /* adouble value. (=) */
-      arg = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
       arg1 = (size_t)trunc(fabs(dp_T0[res]));
@@ -4731,7 +4729,7 @@ int hov_forward(
 
     case ref_assign_ind: /* assign an adouble variable an    assign_ind */
       /* independent double value (<<=) */
-      arg = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(dp_T0[arg]));
@@ -4767,11 +4765,11 @@ int hov_forward(
 
     case ref_eq_plus_d: /* Add a floating point to an    eq_plus_d */
       /* adouble. (+=) */
-      arg = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(dp_T0[arg]));
@@ -4785,8 +4783,8 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case ref_eq_plus_a: /* Add an adouble to another    eq_plus_a */
       /* adouble. (+=) */
-      arg = tape.get_locint_f();
-      arg1 = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(dp_T0[arg1]));
@@ -4821,11 +4819,11 @@ int hov_forward(
 
     case ref_eq_min_d: /* Subtract a floating point from an    eq_min_d */
       /* adouble. (-=) */
-      arg = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(dp_T0[arg]));
@@ -4839,8 +4837,8 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
     case ref_eq_min_a: /* Subtract an adouble from another    eq_min_a */
       /* adouble. (-=) */
-      arg = tape.get_locint_f();
-      arg1 = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(dp_T0[arg1]));
@@ -4876,11 +4874,11 @@ int hov_forward(
 
     case ref_eq_mult_d: /* Multiply an adouble by a    eq_mult_d */
       /* floating point. (*=) */
-      arg = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(dp_T0[arg]));
@@ -4904,8 +4902,8 @@ int hov_forward(
 
     case ref_eq_mult_a: /* Multiply one adouble by another    eq_mult_a */
       /* (*=) */
-      arg = tape.get_locint_f();
-      arg1 = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(dp_T0[arg1]));
@@ -4960,9 +4958,9 @@ int hov_forward(
       break;
 
     case vec_copy:
-      arg = tape.get_locint_f();
-      size = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      size = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       for (qq = 0; qq < size; qq++) {
         IF_KEEP_WRITE_TAYLOR(res + qq, keep, k, p);
@@ -4990,10 +4988,10 @@ int hov_forward(
       break;
 
     case vec_dot:
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      size = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      size = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
       IF_KEEP_WRITE_TAYLOR(res, keep, k, p);
 #if !defined(_NTIGHT_)
       dp_T0[res] = 0;
@@ -5078,11 +5076,11 @@ int hov_forward(
       break;
 
     case vec_axpy:
-      arg = tape.get_locint_f();
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
-      size = tape.get_locint_f();
-      res = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
+      size = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 
       for (qq = 0; qq < size; qq++) {
         IF_KEEP_WRITE_TAYLOR(res + qq, keep, k, p);
@@ -5147,18 +5145,18 @@ int hov_forward(
       break;
 
     case ref_cond_assign: /* cond_assign */
-      arg = tape.get_locint_f();
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
       {
 #if !defined(_NTIGHT_)
         locint ref =
 #endif
-            tape.get_locint_f();
+            evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
         coval =
 #endif
-            tape.get_val_f();
+            evalCtx.loadNextForward<ValInfo>();
 #if !defined(_NTIGHT_)
         res = (size_t)trunc(fabs(dp_T0[ref]));
 
@@ -5199,7 +5197,7 @@ int hov_forward(
 #endif              /* ALL_TOGETHER_AGAIN */
 
 #ifdef _INT_FOR_
-        coval = tape.get_val_f();
+        coval = evalCtx.loadNextForward<ValInfo>();
 
         if (dp_T0[arg] > 0)
           FOR_0_LE_l_LT_pk TRES_INC = TARG1_INC;
@@ -5248,18 +5246,18 @@ int hov_forward(
       break;
 
     case ref_cond_eq_assign: /* cond_eq_assign */
-      arg = tape.get_locint_f();
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
       {
 #if !defined(_NTIGHT_)
         locint ref =
 #endif
-            tape.get_locint_f();
+            evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
         coval =
 #endif
-            tape.get_val_f();
+            evalCtx.loadNextForward<ValInfo>();
 #if !defined(_NTIGHT_)
         res = (size_t)trunc(fabs(dp_T0[ref]));
 
@@ -5298,7 +5296,7 @@ int hov_forward(
 #endif              /* ALL_TOGETHER_AGAIN */
 
 #ifdef _INT_FOR_
-        coval = tape.get_val_f();
+        coval = evalCtx.loadNextForward<ValInfo>();
 
         if (dp_T0[arg] >= 0)
           FOR_0_LE_l_LT_pk TRES_INC = TARG1_INC;
@@ -5343,13 +5341,13 @@ int hov_forward(
       break;
 
     case ref_cond_assign_s: /* cond_assign_s */
-      arg = tape.get_locint_f();
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(dp_T0[arg2]));
@@ -5372,7 +5370,7 @@ int hov_forward(
 #endif              /* ALL_TOGETHER_AGAIN */
 
 #ifdef _INT_FOR_
-      coval = tape.get_val_f();
+      coval = evalCtx.loadNextForward<ValInfo>();
 
       if (dp_T0[arg] > 0)
         FOR_0_LE_l_LT_pk TRES_INC = TARG1_INC;
@@ -5403,13 +5401,13 @@ int hov_forward(
       break;
 
     case ref_cond_eq_assign_s: /* cond_eq_assign_s */
-      arg = tape.get_locint_f();
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
+      arg = evalCtx.loadNextForward<LocInfo>();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       coval =
 #endif
-          tape.get_val_f();
+          evalCtx.loadNextForward<ValInfo>();
 
 #if !defined(_NTIGHT_)
       res = (size_t)trunc(fabs(dp_T0[arg2]));
@@ -5432,7 +5430,7 @@ int hov_forward(
 #endif              /* ALL_TOGETHER_AGAIN */
 
 #ifdef _INT_FOR_
-      coval = tape.get_val_f();
+      coval = evalCtx.loadNextForward<ValInfo>();
 
       if (dp_T0[arg] >= 0)
         FOR_0_LE_l_LT_pk TRES_INC = TARG1_INC;
@@ -5466,12 +5464,12 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case take_stock_op: /* take_stock_op */
-      size = tape.get_locint_f();
-      res = tape.get_locint_f();
+      size = evalCtx.loadNextForward<LocInfo>();
+      res = evalCtx.loadNextForward<LocInfo>();
 #if !defined(_NTIGHT_)
       d =
 #endif
-          tape.get_val_v_f(size);
+          evalCtx.get_val_v_f(size);
 
       for (size_t ls = 0; ls < size; ls++) {
 #if !defined(_NTIGHT_)
@@ -5494,8 +5492,8 @@ int hov_forward(
 
       /*--------------------------------------------------------------------------*/
     case death_not: /* death_not */
-      arg1 = tape.get_locint_f();
-      arg2 = tape.get_locint_f();
+      arg1 = evalCtx.loadNextForward<LocInfo>();
+      arg2 = evalCtx.loadNextForward<LocInfo>();
 
 #ifdef _KEEP_
       if (keep) {
@@ -5509,9 +5507,9 @@ int hov_forward(
       /*--------------------------------------------------------------------------*/
 #if defined(_EXTERN_) /* ZOS,  FOS, FOV up to now */
     case ext_diff:    /* extern differentiated function */
-      tape.ext_diff_fct_index(tape.get_locint_f());
-      n = static_cast<int>(tape.get_locint_f());
-      m = static_cast<int>(tape.get_locint_f());
+      tape.ext_diff_fct_index(evalCtx.loadNextForward<LocInfo>());
+      n = static_cast<int>(evalCtx.loadNextForward<LocInfo>());
+      m = static_cast<int>(evalCtx.loadNextForward<LocInfo>());
       edfct = get_ext_diff_fct(tape.tapeId(), tape.ext_diff_fct_index());
       edfct->p = p;
       if (edfct->ADOLC_EXT_FCT_POINTER == nullptr)
@@ -5550,14 +5548,14 @@ int hov_forward(
       break;
 
     case ext_diff_iArr: /* extern differentiated function */
-      iArrLength = tape.get_locint_f();
+      iArrLength = evalCtx.loadNextForward<LocInfo>();
       iArr = new size_t[iArrLength];
       for (size_t loop = 0; loop < iArrLength; ++loop)
-        iArr[loop] = tape.get_locint_f();
-      tape.get_locint_f(); /* iArrLength again */
-      tape.ext_diff_fct_index(tape.get_locint_f());
-      n = static_cast<int>(tape.get_locint_f());
-      m = static_cast<int>(tape.get_locint_f());
+        iArr[loop] = evalCtx.loadNextForward<LocInfo>();
+      evalCtx.loadNextForward<LocInfo>(); /* iArrLength again */
+      tape.ext_diff_fct_index(evalCtx.loadNextForward<LocInfo>());
+      n = static_cast<int>(evalCtx.loadNextForward<LocInfo>());
+      m = static_cast<int>(evalCtx.loadNextForward<LocInfo>());
       edfct = get_ext_diff_fct(tape.tapeId(), tape.ext_diff_fct_index());
       edfct->p = p;
       if (edfct->ADOLC_EXT_FCT_IARR_POINTER == nullptr)
@@ -5596,28 +5594,28 @@ int hov_forward(
       iArr = nullptr;
       break;
     case ext_diff_v2: {
-      tape.ext_diff_fct_index(tape.get_locint_f());
-      iArrLength = tape.get_locint_f();
+      tape.ext_diff_fct_index(evalCtx.loadNextForward<LocInfo>());
+      iArrLength = evalCtx.loadNextForward<LocInfo>();
       iArr = new size_t[iArrLength];
       for (size_t loop = 0; loop < iArrLength; ++loop)
-        iArr[loop] = tape.get_locint_f();
-      tape.get_locint_f(); /* iArrLength again */
-      nin = tape.get_locint_f();
-      nout = tape.get_locint_f();
+        iArr[loop] = evalCtx.loadNextForward<LocInfo>();
+      evalCtx.loadNextForward<LocInfo>(); /* iArrLength again */
+      nin = evalCtx.loadNextForward<LocInfo>();
+      nout = evalCtx.loadNextForward<LocInfo>();
       insz = new locint[2 * (nin + nout)];
       outsz = insz + nin;
       size_t *lowestXLoc_ext_v2 = outsz + nout;
       size_t *lowestYLoc_ext_v2 = outsz + nout + nin;
       for (size_t loop = 0; loop < nin; ++loop) {
-        insz[loop] = tape.get_locint_f();
-        lowestXLoc_ext_v2[loop] = tape.get_locint_f();
+        insz[loop] = evalCtx.loadNextForward<LocInfo>();
+        lowestXLoc_ext_v2[loop] = evalCtx.loadNextForward<LocInfo>();
       }
       for (size_t loop = 0; loop < nout; ++loop) {
-        outsz[loop] = tape.get_locint_f();
-        lowestYLoc_ext_v2[loop] = tape.get_locint_f();
+        outsz[loop] = evalCtx.loadNextForward<LocInfo>();
+        lowestYLoc_ext_v2[loop] = evalCtx.loadNextForward<LocInfo>();
       }
-      tape.get_locint_f(); /* nin again */
-      tape.get_locint_f(); /* nout again */
+      evalCtx.loadNextForward<LocInfo>(); /* nin again */
+      evalCtx.loadNextForward<LocInfo>(); /* nout again */
       edfct2 = get_ext_diff_fct_v2(tape.tapeId(), tape.ext_diff_fct_index());
       edfct2->p = p;
       if (edfct2->ADOLC_EXT_FCT_POINTER == nullptr)
@@ -5716,7 +5714,7 @@ int hov_forward(
 #ifdef ADOLC_MEDIPACK_SUPPORT
     /*--------------------------------------------------------------------------*/
     case medi_call: {
-      locint mediIndex = tape.get_locint_f();
+      locint mediIndex = evalCtx.loadNextForward<LocInfo>();
       short tapeId = tape.tapeId();
 
 #if defined(_ZOS_)
@@ -5813,7 +5811,7 @@ int hov_forward(
     } /* endswitch */
 
     /* Read the next operation */
-    operation = tape.get_op_f();
+    operation = evalCtx.loadNextForward<OpInfo>();
 #if defined(ADOLC_DEBUG)
     ++countPerOperation[operation];
 #endif /* ADOLC_DEBUG */
@@ -5831,8 +5829,12 @@ int hov_forward(
 #endif /* ADOLC_DEBUG */
 
 #if defined(_KEEP_)
-  if (keep)
-    tape.taylor_close();
+  if (keep) {
+    tape.tapestats(TapeInfos::NUM_TAYS,
+                   evalCtx.taylor_close(tape.tay_fileName()));
+    evalCtx.tay_numInds = tape.tapestats(TapeInfos::NUM_INDEPENDENTS);
+    evalCtx.tay_numDeps = tape.tapestats(TapeInfos::NUM_DEPENDENTS);
+  }
 #endif
 
   /* clean up */
@@ -5857,8 +5859,19 @@ int hov_forward(
   myfree1(dp_z);
 #endif
 
-  tape.end_sweep();
-
+#if defined(_KEEP_)
+  if (keep || tape.isExclusiveNonLocking()) {
+    tape.end_sweep(std::move(evalCtx));
+  } else {
+    tape.end_sweep(evalCtx);
+  }
+#else
+  if (tape.isExclusiveNonLocking()) {
+    tape.end_sweep(std::move(evalCtx));
+  } else {
+    tape.end_sweep(evalCtx);
+  }
+#endif // _KEEP_
 #if defined(_INDO_)
 #if defined(_INDOPRO_)
   for (size_t i = 0; i < max_ind_dom; i++) {

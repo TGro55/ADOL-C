@@ -19,13 +19,10 @@
 #include <adolc/tape_interface.h>
 #include <adolc/valuetape/tapeinfos.h>
 #include <adolc/valuetape/valuetape.h>
-#include <algorithm>
 #include <array>
 #include <cassert>
 #include <iostream>
-#include <memory>
 #include <sstream>
-#include <vector>
 
 #ifdef ADOLC_MEDIPACK_SUPPORT
 #include <adolc/medipacksupport_p.h>
@@ -37,57 +34,64 @@
 #endif // ADOLC_AMPI_SUPPORT
 
 int trace_on(short tapeId, int keepTaylors) {
-
   ValueTape &tape = findTape(tapeId);
-  // store Id to restore it after trace_off
-  currentTapeStack().push(currentTapePtr());
-  setCurrentTape(tapeId);
+  tape.beginRecording();
 
-  int retval = tape.initNewTape();
+  try {
+    int retval = tape.initNewTape();
 #ifdef ADOLC_MEDIPACK_SUPPORT
-  tape.mediInitTape(tapeId);
+    tape.mediInitTape(tapeId);
 #endif
 
-  tape.keepTaylors(keepTaylors);
-  tape.tapestats(TapeInfos::NO_MIN_MAX, tape.nominmaxFlag());
+    tape.keepTaylors(keepTaylors);
+    tape.tapestats(TapeInfos::NO_MIN_MAX, tape.nominmaxFlag());
 
-  if (keepTaylors)
-    tape.deg_save(1);
-  tape.start_trace();
-  tape.take_stock(); /* record all existing adoubles on the tape */
+    if (keepTaylors != 0) {
+      tape.deg_save(1);
+    }
+    tape.start_trace();
+    tape.take_stock(); /* record all existing adoubles on the tape */
 
-  return retval;
+    return retval;
+  } catch (...) {
+    tape.endRecording();
+    throw;
+  }
 }
 
 int trace_on(short tapeId, int keepTaylors, size_t obs, size_t lbs, size_t vbs,
              size_t tbs, int skipFileCleanup) {
 
   ValueTape &tape = findTape(tapeId);
+  tape.beginRecording();
   // store Id to restore it after trace_off
-  currentTapeStack().push(currentTapePtr());
-  setCurrentTape(tapeId);
 
-  int retval = tape.initNewTape();
-  if (retval) {
+  try {
+    int retval = tape.initNewTape();
+    if (retval) {
 #ifdef ADOLC_MEDIPACK_SUPPORT
-    tape.mediInitTape(tapeId);
+      tape.mediInitTape(tapeId);
 #endif
-    // reset the tape buffers
-    tape.freeTapeResources();
-    tape.tapestats(TapeInfos::OP_BUFFER_SIZE, obs);
-    tape.tapestats(TapeInfos::LOC_BUFFER_SIZE, lbs);
-    tape.tapestats(TapeInfos::VAL_BUFFER_SIZE, vbs);
-    tape.tapestats(TapeInfos::TAY_BUFFER_SIZE, tbs);
-    tape.keepTaylors(keepTaylors);
-    tape.tapestats(TapeInfos::NO_MIN_MAX, tape.nominmaxFlag());
-    tape.skipFileCleanup(skipFileCleanup);
-    if (keepTaylors != 0)
-      tape.deg_save(1);
-    tape.start_trace();
-    tape.take_stock(); /* record all existing adoubles on the tape */
-    return retval;
-  } else
+      // reset the tape buffers
+      tape.tapestats(TapeInfos::OP_BUFFER_SIZE, obs);
+      tape.tapestats(TapeInfos::LOC_BUFFER_SIZE, lbs);
+      tape.tapestats(TapeInfos::VAL_BUFFER_SIZE, vbs);
+      tape.tapestats(TapeInfos::TAY_BUFFER_SIZE, tbs);
+      tape.keepTaylors(keepTaylors);
+      tape.tapestats(TapeInfos::NO_MIN_MAX, tape.nominmaxFlag());
+      tape.skipFileCleanup(skipFileCleanup);
+      if (keepTaylors != 0)
+        tape.deg_save(1);
+      tape.start_trace();
+      tape.take_stock(); /* record all existing adoubles on the tape */
+      return retval;
+    }
+    tape.endRecording();
     return -1;
+  } catch (...) {
+    tape.endRecording();
+    throw;
+  }
 }
 
 void trace_off(int flag) {
@@ -96,25 +100,21 @@ void trace_off(int flag) {
   using ADOLCError::ErrorType::TAPING_NOT_ACTUALLY_TAPING;
 
   ValueTape &tape = currentTape();
-  if (tape.workMode() != TapeInfos::WRITE_ACCESS)
+
+  if (!tape.isRecording())
     fail(TAPING_NOT_ACTUALLY_TAPING, CURRENT_LOCATION,
          FailInfo{.info1 = tape.tapeId()});
-  tape.keepTape(flag);
-  tape.keep_stock(); /* copy remaining live variables + trace_flag = 0 */
-  tape.stop_trace(flag);
-  tape.workMode(TapeInfos::NO_MODE);
 
-  // restore previous tapeId and delete it
-  setCurrentTape(currentTapeStack().top());
-  currentTapeStack().pop();
-}
+  try {
+    tape.keepTape(flag);
+    tape.keep_stock(); /* copy remaining live variables + trace_flag = 0 */
+    tape.stop_trace(flag);
+    tape.statsNeedReload();
+    tape.endRecording();
+  } catch (...) {
+    tape.endRecording();
 
-void cachedTraceTags(std::vector<short> &result) {
-  if (!tapeBuffer().empty()) {
-    result.resize(tapeBuffer().size());
-    for (size_t i = 0; i < tapeBuffer().size(); ++i) {
-      result[i] = tapeBuffer()[i]->tapeId();
-    }
+    throw;
   }
 }
 

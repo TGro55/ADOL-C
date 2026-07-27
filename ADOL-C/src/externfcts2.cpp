@@ -88,6 +88,7 @@ int call_ext_fct(ext_diff_fct_v2 *edfct, size_t iArrLen, size_t *iArr,
   ValueTape &tape = findTape(edfct->tapeId);
 
   tape.put_op(ext_diff_v2, 2 * (nin + nout) + iArrLen);
+  tape.registerExtDiff();
   tape.put_loc(edfct->index);
   tape.put_loc(iArrLen);
   for (size_t i = 0; i < iArrLen; i++)

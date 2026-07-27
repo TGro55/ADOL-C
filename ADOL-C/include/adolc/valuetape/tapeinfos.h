@@ -5,12 +5,13 @@
 #include <adolc/adolcerror.h>
 #include <adolc/oplate.h>
 #include <adolc/valuetape/bufferstate.h>
-#include <adolc/valuetape/infotype.h>
 #include <array>
-#include <memory>
+#include <atomic> /* handling file names over different threads*/
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <utility>
 
-using ADOLC::detail::InfoTypeBase;
-using ADOLC::detail::TayInfo;
 using ADOLCError::ErrorType;
 struct TapeInfos {
 
@@ -36,360 +37,114 @@ struct TapeInfos {
     NUM_PARAM, /* no of parameters (doubles) interchangeable without retaping */
     STAT_SIZE  /* represents the size of the stats vector */
   };
-  // modes for the tape evaluation; set by functions like "fos_forward"
-  enum WORKMODES { NO_MODE, WRITE_ACCESS, READ_ACCESS };
+  // storage order used by the tape I/O layer
+  enum FILES { OPERATIONS_FILE, LOCATIONS_FILE, VALUES_FILE, TAYLORS_FILE };
 
-  ~TapeInfos();
+  // tape types => used for file name generation
+  enum TAPENAMES { LOCATIONS_TAPE, VALUES_TAPE, OPERATIONS_TAPE, TAYLORS_TAPE };
+
+  ~TapeInfos() {
+    for (auto &fileName : fileNames) {
+      if (fileName) {
+        if (keepTape == 0 || skipFileCleanup == 0)
+          remove(fileName);
+        delete[] fileName;
+        fileName = nullptr;
+      }
+    }
+  };
   TapeInfos() = default;
-  TapeInfos(short tapeId);
+  explicit TapeInfos(short tapeId) : tapeId_(tapeId) {
+    fileNames[OPERATIONS_FILE] = createFileName(tapeId, OPERATIONS_TAPE);
+    fileNames[LOCATIONS_FILE] = createFileName(tapeId, LOCATIONS_TAPE);
+    fileNames[VALUES_FILE] = createFileName(tapeId, VALUES_TAPE);
+    fileNames[TAYLORS_FILE] = createFileName(tapeId, TAYLORS_TAPE);
+  };
+  TapeInfos(short tapeId, std::array<std::string, 4> &&tapeBaseNames)
+      : tapeBaseNames_(std::move(tapeBaseNames)), tapeId_(tapeId) {
+    fileNames[OPERATIONS_FILE] = createFileName(tapeId, OPERATIONS_TAPE);
+    fileNames[LOCATIONS_FILE] = createFileName(tapeId, LOCATIONS_TAPE);
+    fileNames[VALUES_FILE] = createFileName(tapeId, VALUES_TAPE);
+    fileNames[TAYLORS_FILE] = createFileName(tapeId, TAYLORS_TAPE);
+  };
   TapeInfos(const TapeInfos &) = delete;
   TapeInfos &operator=(const TapeInfos &) = delete;
-  TapeInfos(TapeInfos &&other) noexcept;
-  TapeInfos &operator=(TapeInfos &&other) noexcept;
+  TapeInfos(TapeInfos &&other) noexcept
+      : stats(other.stats), fileNames(other.fileNames),
+        tapeBaseNames_(std::move(other.tapeBaseNames_)), tapeId_(other.tapeId_),
+        keepTape(other.keepTape), skipFileCleanup(other.skipFileCleanup) {
+    other.fileNames.fill(nullptr);
+  }
+  TapeInfos &operator=(TapeInfos &&other) noexcept {
+    if (this != &other) {
+      for (auto &fileName : fileNames) {
+        delete[] fileName;
+      }
+      stats = std::move(other.stats);
+      tapeBaseNames_ = std::move(other.tapeBaseNames_);
+      fileNames = std::move(other.fileNames);
+      tapeId_ = other.tapeId_;
+      keepTape = other.keepTape;
+      skipFileCleanup = other.skipFileCleanup;
+      other.fileNames.fill(nullptr);
+    }
+    return *this;
+  }
 
-  ADOLC::detail::OpBuffer opBuffer_{};
-  ADOLC::detail::ValBuffer valBuffer_{};
-  ADOLC::detail::LocBuffer locBuffer_{};
-  ADOLC::detail::TayBuffer tayBuffer_{};
-  std::array<size_t, STAT_SIZE> stats{};
-
+  using StatArray = std::array<size_t, STAT_SIZE>;
+  StatArray stats{};
+  std::array<char *, 4> fileNames{};
+  // the base names of every tape type
+  std::array<std::string, 4> tapeBaseNames_;
   short tapeId_{-1};
-  size_t numInds{0};
-  size_t numDeps{0};
-  // 1 - write taylor stack in taping mode
-  int keepTaylors{0};
-
-  size_t num_eq_prod{0};
-
-  // the next Buffer to read back
-  size_t nextBufferNumber{0};
-  // == 1 if last taylor buffer is still in
-  // in core(first call of reverse)
-  char lastTayBlockInCore{0};
-  // degree to save and saved respectively
-  int deg_save{0};
-  // # of independents for the taylor stack
-  size_t tay_numInds{0};
-  // # of dependents for the taylor stack
-  size_t tay_numDeps{0};
-
-  enum WORKMODES workMode { NO_MODE };
-
-  /* extern diff. fcts */
-  size_t ext_diff_fct_index{0}; /* set by forward and reverse (from tape) */
-
-  /**
-   * Indicates that reverse evaluation of this tape happens inside an outer
-   * tape evaluation.
-   *
-   * First-order reverse uses this flag to accumulate adjoints for independent
-   * and dependent variables into the outer tape instead of overwriting them.
-   */
-  bool nestedReverseEval{false};
-
-  size_t numSwitches{0};
-  double *signature{nullptr};
 
   constexpr static size_t maxLocsPerOp{10}; // used in tape_loc_...
 
-  void freeTapeResources();
+  //  - remember if tapes shall be written out to disk
+  // - this information can only be given at taping time and must survive all
+  // other actions on the tape
+  int keepTape{0};
 
-  // writes the block of size depth of taylor coefficients from point loc to
-  // the taylor buffer, if the buffer is filled, then it is written to the
-  // taylor tape
-  void write_taylor(double *taylorCoefficientPos, std::ptrdiff_t keep,
-                    const char *tay_fileName);
-
-  ///@brief returns current taylor coefficient and advances the stack pointer
-  double get_taylor() {
-    if (tayBuffer_.position() == 0)
-      get_tay_block_r();
-    return tayBuffer_.retreatAndRead();
-  }
-  // writes a single element (x) to the taylor buffer and writes the buffer
-  // to disk if necessary
-  void write_scaylor(double val, const char *tay_fileName) {
-    if (tayBuffer_.position() == tayBuffer_.capacity())
-      put_block<TayInfo<TapeInfos, ErrorType>>(tay_fileName,
-                                               tayBuffer_.capacity());
-    tayBuffer_.writeAndAdvance(val);
-  }
+  // defaults to 0, if 1 skips file removal (when file operations are costly)
+  int skipFileCleanup{0};
 
   /****************************************************************************/
-  /* Writes the block of size depth of taylor coefficients from point loc to  */
-  /* the taylor buffer.  If the buffer is filled, then it is written to the   */
-  /* taylor tape.                                                             */
-  /*--------------------------------------------------------------------------*/
-  void write_taylors(double *taylorCoefficientPos, int keep, int degree,
-                     int numDir, const char *tay_fileName);
-
+  /* Tries to read a local config file containing, e.g., buffer sizes */
   /****************************************************************************/
-  /* Write_scaylors writes # size elements from x to the taylor buffer.       */
-  /****************************************************************************/
-  void write_scaylors(const double *taylorCoefficientPos, std::ptrdiff_t size,
-                      const char *tay_fileName);
-
-  /*
-   * Puts a block of taylor coefficients from the value stack buffer to the
-   * buffer pointed ty by taylorCoefficients. The buffer is expected to be
-   * contiguous in memory. Use in Higher Order Scalar drivers.
-   */
-  void get_taylors(double *taylorCoefficients, std::ptrdiff_t degree);
-
-  /*
-   * Puts a block of taylor coefficients from the value stack buffer to buffer
-   * pointed to by taylorCoefficients. The buffer is expected to be contiguous
-   * in memory. Use in Higher Order Vector drivers.
-   */
-  void get_taylors_p(double *taylorCoefficients, int degree, int numDir);
-  void get_tay_block_r();
-
-  // functions for handling loc tape
-  void put_loc(size_t loc) { locBuffer_.writeAndAdvance(loc); }
-
-  void get_loc_block_f();
-  void get_loc_block_r();
-  // functions for handling op tape
-
-  // puts an operation into the operation buffer, ensures that location
-  // buffer and constants buffer are prepared to take the belonging stuff
-  void put_op(OPCODES op, const char *loc_fileName, const char *op_fileName,
-              const char *val_fileName, size_t reserveExtraLocations = 0);
-  void get_op_block_f();
-  void get_op_block_r();
-
-  /**
-   * @brief Ensure that the tape file associated with Info exists and is ready
-   *        for writing.
-   *
-   * This function lazily creates (or recreates) the file represented by the
-   * Info adapter. The behavior differs slightly between normal tapes
-   * (Op/Loc/Val) and the Taylor tape:
-   *
-   *  - Op/Loc/Val tapes:
-   *      If the file does not yet exist, we first probe for an existing file
-   *      with the same name. If such a file is present it is removed, and a
-   *      new empty file is created in binary write mode ("wb").
-   *
-   *      This guarantees that a fresh recording always starts with a clean
-   *      tape and no leftover data from a previous run.
-   *
-   *  - Taylor tape:
-   *      The Taylor tape is opened using "w+b". Unlike the other tapes, it is
-   *      not removed beforehand because we want to keep already stored data.
-   *
-   * The function does nothing if the file is already open.
-   *
-   * Errors:
-   *  - Fails with CANNOT_REMOVE_FILE if an old tape file cannot be deleted.
-   *
-   * Notes:
-   *  - The actual file handle and buffer fields are provided by the Info
-   * adapter.
-   *  - The class itself does not know which concrete members are used; Info
-   * maps the generic operations to the appropriate TInfos fields.
-   */
-  template <InfoTypeBase<TapeInfos, ErrorType> Info>
-  void openFile(const char *fileName) {
-    using ADOLCError::ErrorType::CANNOT_REMOVE_FILE;
-    if (Info::file(*this) == nullptr) {
-      if constexpr (!std::is_same_v<Info, TayInfo<TapeInfos, ErrorType>>) {
-        Info::openFile(*this, fileName);
-        if (Info::file(*this) != nullptr) {
-          fclose(Info::file(*this));
-          if (Info::removeFile(fileName)) {
-            fail(CANNOT_REMOVE_FILE, CURRENT_LOCATION);
-          }
-        }
-        Info::openFile(*this, fileName, "wb");
-      } else if constexpr (std::is_same_v<Info,
-                                          TayInfo<TapeInfos, ErrorType>>) {
-        Info::openFile(*this, fileName, "w+b");
-      } else {
-        static_assert(!std::is_same_v<Info, Info>, "Not Implemented!");
-      }
-    }
+  static char *duplicatestr(const char *instr) {
+    size_t len = std::strlen(instr);
+    char *outstr = new char[len + 1];
+    std::strncpy(outstr, instr, len);
+    return outstr;
   }
 
   /**
-   * @brief Flush the current in-memory tape buffer to disk.
+   * @brief Generates an id for the thread within the function is called
    *
-   * Writes all elements from the beginning of the Info buffer up to bufferPos
-   * to the tape file in fixed-size chunks (Info::chunkSize).  A final partial
-   * chunk is written if necessary.
-   *
-   * After the write:
-   *   - the total number of stored elements (Info::num) is increased,
-   *   - the current buffer pointer is reset to the start of the buffer.
-   *
-   * The file is created automatically if it does not yet exist (see
-   * openFile()).
-   *
-   * Errors:
-   *  - Fails with TAPING_FATAL_IO_ERROR if any write operation fails.
-   *
-   * Notes:
-   *  - This function implements the buffered tape output mechanism of ADOL-C.
-   *    The buffer accumulates operations/locations/values in memory and is
-   *    periodically flushed to disk to avoid excessive I/O calls.
+   * @return id of the current thread
    */
-  template <InfoTypeBase<TapeInfos, ErrorType> Info>
-  void put_block(const char *fileName, size_t lengthBlock) {
-    using ADOLC::detail::write;
-    using ADOLCError::fail;
-    using ADOLCError::ErrorType::CANNOT_REMOVE_FILE;
-    using ADOLCError::ErrorType::TAPING_FATAL_IO_ERROR;
+  int getThreadIndex() {
+    static std::atomic<int> nextId{0};
+    thread_local int id = nextId++;
+    return id;
+  }
+  /****************************************************************************/
+  /* Returns the char*: tapeBaseName+thread-threadNumber+tapeId+.tap+\0       */
+  /* The result string must be freed be the caller!                           */
+  /****************************************************************************/
+  char *createFileName(short tapeId, int tapeType) {
+    std::string fileName(tapeBaseNames_[tapeType]);
 
-    openFile<Info>(fileName);
-    const size_t numChunks = lengthBlock / Info::chunkSize;
+    int threadId = getThreadIndex();
+    fileName += "thread-" + std::to_string(threadId) + "_";
 
-    // write full chunks
-    for (size_t chunk = 0; chunk < numChunks; chunk++) {
-      auto returnCode =
-          write<TapeInfos, ErrorType, Info>(*this, chunk, Info::chunkSize);
-      if (returnCode != 1)
-        fail(TAPING_FATAL_IO_ERROR, CURRENT_LOCATION);
-    }
+    fileName += "tape-" + std::to_string(tapeId) + ".tap";
 
-    // write one final partial chunk
-    const size_t remain = lengthBlock % Info::chunkSize;
-    if (remain != 0) {
-      auto returnCode =
-          write<TapeInfos, ErrorType, Info>(*this, numChunks, remain);
-      if (returnCode != 1)
-        fail(TAPING_FATAL_IO_ERROR, CURRENT_LOCATION);
-    }
-
-    Info::setNum(*this, Info::getNum(*this) + lengthBlock);
-    Info::setCurr(*this, 0);
+    // don't forget space for null termination
+    char *ret_char = new char[fileName.size() + 1];
+    std::strcpy(ret_char, fileName.c_str()); // ensures null terminatoin
+    return ret_char;
   }
-  // functions for handling val tape
-
-  /****************************************************************************/
-  /* Write some constants to the buffer without disk access                   */
-  /****************************************************************************/
-  void put_vals_notWriteBlock(double *vals, size_t numVals) {
-    for (size_t i = 0; i < numVals; ++i) {
-      valBuffer_.writeAndAdvance(vals[i]);
-    }
-  }
-  void put_vals_writeBlock(double *vals, size_t numVals,
-                           const char *op_fileName, const char *val_fileName);
-  void get_val_block_r();
-  void get_val_block_f();
-  /****************************************************************************/
-  /* Returns a pointer to the first element of a values vector and skips the  */
-  /* vector. -- Forward Mode --                                               */
-  /****************************************************************************/
-  double *get_val_v_f(size_t size) {
-    double *temp = valBuffer_.current();
-    valBuffer_.position(valBuffer_.position() + size);
-    return temp;
-  }
-  /****************************************************************************/
-  /* Returns a pointer to the first element of a values vector and skips the  */
-  /* vector. -- Reverse Mode --                                               */
-  /****************************************************************************/
-  double *get_val_v_r(size_t size) {
-    valBuffer_.position(valBuffer_.position() - size);
-    return valBuffer_.current();
-  }
-
-  /****************************************************************************/
-  /* Not sure what's going on here! -> vector class ?  --- kowarz             */
-  /****************************************************************************/
-  void reset_val_r(void) {
-    if (valBuffer_.position() == 0)
-      get_val_block_r();
-  }
-
-  /****************************************************************************/
-  /* Update locations tape to remove assignments involving temp. variables.   */
-  /* e.g.  t = a + b ; y = t  =>  y = a + b                                   */
-  /****************************************************************************/
-  int upd_resloc(size_t temp, size_t lhs) {
-    // LocBuffer points to the first entry of the Locations and CurrLoc-1 to the
-    // last placed location in the buffer. Thus, the check ask if there is no
-    // element on the tape.
-    if (locBuffer_.position() < 1)
-      return 0;
-    if (temp == locBuffer_[locBuffer_.position() - 1]) {
-      locBuffer_[locBuffer_.position() - 1] = lhs;
-      return 1;
-    }
-    return 0;
-  }
-
-  int upd_resloc_check(const size_t temp) {
-    // LocBuffer points to the first entry of the Locations and CurrLoc-1 to the
-    // last placed location in the buffer. Thus, the check ask if there is no
-    // element on the tape.
-    if (locBuffer_.position() < 1)
-      return 0;
-    // checks if tape-element represented by "tmp" is the last created.
-    if (temp == locBuffer_[locBuffer_.position() - 1]) {
-      return 1;
-    }
-    return 0;
-  }
-
-  /****************************************************************************/
-  /* Update locations and operations tape to remove special operations inv.   */
-  /* temporary variables. e.g.  t = a * b ; y += t  =>  y += a * b            */
-  /****************************************************************************/
-  int upd_resloc_inc_prod(size_t temp, size_t newlhs, unsigned char newop) {
-    if (locBuffer_.position() < 3)
-      return 0;
-    if (opBuffer_.position() < 1)
-      return 0;
-    if (temp == locBuffer_[locBuffer_.position() - 1] &&
-        mult_a_a == opBuffer_[opBuffer_.position() - 1] &&
-        /* skipping recursive case */
-        newlhs != locBuffer_[locBuffer_.position() - 2] &&
-        newlhs != locBuffer_[locBuffer_.position() - 3]) {
-      locBuffer_[locBuffer_.position() - 1] = newlhs;
-      opBuffer_[opBuffer_.position() - 1] = newop;
-      return 1;
-    }
-    return 0;
-  }
-
-/****************************************************************************/
-/*                                                          DEBUG FUNCTIONS */
-#ifdef ADOLC_HARDDEBUG
-  unsigned char get_op_f() {
-    unsigned char temp = opBuffer_.readAndAdvance();
-    fprintf(DIAG_OUT, "f_op: %i\n", temp - '\0'); /* why -'\0' ??? kowarz */
-    return temp;
-  }
-  unsigned char get_op_r() {
-    unsigned char temp = opBuffer_.retreatAndRead();
-    fprintf(DIAG_OUT, "r_op: %i\n", temp - '\0');
-    return temp;
-  }
-  size_t get_size_t_f() {
-    size_t temp = locBuffer_.readAndAdvance();
-    fprintf(DIAG_OUT, "f_loc: %i\n", temp);
-    return temp;
-  }
-  size_t get_size_t_r() {
-    size_t temp = locBuffer_.retreatAndRead();
-    fprintf(DIAG_OUT, "r_loc: %i\n", temp);
-    return temp;
-  }
-  double get_val_f() {
-    double temp = valBuffer_.readAndAdvance();
-    fprintf(DIAG_OUT, "f_val: %e\n", temp);
-    return temp;
-  }
-  double get_val_r() {
-    double temp = valBuffer_.retreatAndRead();
-    fprintf(DIAG_OUT, "r_val: %e\n", temp);
-    return temp;
-  }
-#endif
-
-  size_t get_val_space(const char *op_fileName, const char *val_fileName);
 };
 
 #endif // ADOLC_TAPEINFOS_H
