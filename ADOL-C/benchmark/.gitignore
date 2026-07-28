@@ -1,0 +1,6 @@
+# Ignore executables
+benchmark
+
+# Ignore library
+lib
+include
