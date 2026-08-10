@@ -99,6 +99,7 @@ struct Benchmarkproblem {
             std::chrono::high_resolution_clock::now() - start)
             .count());
   }
+  void tenthDerivative() {};
   static void setDimensions(size_t inDim, size_t outDim) {
     InDim = inDim;
     OutDim = outDim;

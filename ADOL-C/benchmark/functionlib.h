@@ -27,4 +27,12 @@ template <typename T> std::vector<T> nonlinear(const std::vector<T> &indep) {
   T result = sin(exp(indep[0])) + log(indep[0] * indep[0] + 1.0);
   return {result};
 }
+
+template <typename T> std::vector<T> circle(const std::vector<T> &indep) {
+  T result;
+  for (size_t i = 0; t < indep.size(); i++) {
+    result += indep[i] * indep[i];
+  }
+  return {result};
+}
 } // namespace benchmarkFunctions
