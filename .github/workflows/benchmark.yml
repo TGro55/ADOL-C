@@ -10,6 +10,8 @@ on:
 jobs:
   benchmark:
     runs-on: ubuntu-latest
+    outputs:
+      comparison_verdict: ${{ steps.compare.outputs.comparison}}
 
     steps:
       - name: Checkout current branch
@@ -65,13 +67,68 @@ jobs:
             -Wl,-rpath,$PWD/install-master/lib \
             -ladolc \
             -o benchmark-master
+        
+      - name: Build benchmark comparator
+        run: |
+          g++ current/ADOL-C/benchmark/compareBenchmarks.cpp \
+            -std=c++20 \
+            -o compareBenchmarks 
 
       - name: Run current benchmark
         run: |
           echo "===== Current branch ====="
-          ./benchmark-current
+          ./benchmark-current -o current_branch.txt
 
       - name: Run master benchmark
         run: |
           echo "===== Master branch ====="
-          ./benchmark-master
+          ./benchmark-master -o master_branch.txt
+      
+      - name: Compare Benchmarks
+        id: compare
+        run: |
+          set +e
+
+          ./compareBenchmarks \
+          -baseline master_branch.txt \
+          -update current_branch.txt
+
+          comparison=$?
+
+          echo "comparison=$comparison" >> "$GITHUB_OUTPUT"
+
+          exit 0
+        
+      - name: Upload comparison results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-comparison-result
+          path: master_branch_compared_to_current_branch.md
+          retention-days: 7
+
+  print-Results:
+    needs: benchmark
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Get Comparison Table
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-comparison-result
+      - name: Print Comparison Table
+        uses: mshick/add-pr-comment@v3
+        if: always()
+        with:
+          message-path: |
+            master_branch_compared_to_current_branch.md
+  
+  check-verdict:
+    needs: benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check verdict
+        if: needs.benchmark.outputs.comparison_verdict == '1'
+        run: |
+          echo "Benchmark comparison failed. Please check the results."
+          exit 1
