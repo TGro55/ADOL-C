@@ -7,11 +7,12 @@
 #include <iostream>
 #include <numeric>
 #include <random>
+#include <string>
 #include <vector>
 
 double tolerance{1e-8};
 
-int factorial(int j) {
+static int factorial(int j) {
   if (j == 0) {
     return 1;
   }
@@ -44,251 +45,269 @@ template <typename T> T calculateMedian(std::vector<T> values) {
 
 /* void doNothing() { volatile int tricking = 1; }; */
 
-struct Benchmarkproblem {
-  inline static size_t InDim;
-  inline static size_t OutDim;
+struct BenchmarkProblem {
   inline static size_t num_tries;
-  inline static int highestDeriv;
+  size_t InDim;
+  size_t OutDim;
+  size_t highestDeriv;
+  std::string functionName;
+  std::function<std::vector<adouble>(const std::vector<adouble> &)>
+      testfunc_adouble;
+  std::function<std::vector<double>(const std::vector<double> &)>
+      testfunc_double;
+  std::function<std::vector<double>(const std::vector<double> &, std::size_t,
+                                    std::size_t, std::size_t)>
+      derivCheckFunc;
+  std::vector<double> input;
+  size_t direction;
 
-  static std::vector<double> make_times_vector() {
+  std::vector<double> make_times_vector() {
     std::vector<double> v;
     v.reserve(num_tries);
     return v;
   }
 
   // Benchmark Data
-  inline static std::vector<double> times_taping = make_times_vector();
-  inline static std::vector<double> times_forward = make_times_vector();
-  inline static std::vector<double> times_reverse = make_times_vector();
-  inline static std::vector<double> times_higher_deriv = make_times_vector();
-  inline static std::vector<size_t> numTays;
-  inline static std::vector<size_t> numOps;
-  inline static std::vector<size_t> numLocs;
-  inline static std::vector<size_t> numVals;
-  inline static std::vector<double> evaluation_error;
-  inline static std::vector<double> jacobian_error;
-  inline static std::vector<double> higher_deriv_error;
+  std::vector<double> times_taping = make_times_vector();
+  std::vector<double> times_forward = make_times_vector();
+  std::vector<double> times_reverse = make_times_vector();
+  std::vector<double> times_higher_deriv = make_times_vector();
+  std::vector<size_t> numTays;
+  std::vector<size_t> numOps;
+  std::vector<size_t> numLocs;
+  std::vector<size_t> numVals;
+  std::vector<double> evaluation_error;
+  std::vector<double> jacobian_error;
+  std::vector<double> higher_deriv_error;
 
-  // Benchmark Properties
-  inline static std::string functionName;
-  inline static std::string filename;
-  inline static std::function<std::vector<adouble>(
-      const std::vector<adouble> &)>
-      testfunc_adouble;
-  inline static std::function<std::vector<double>(const std::vector<double> &)>
-      testfunc_double;
-  inline static std::function<std::vector<double>(
-      const std::vector<double> &, std::size_t, std::size_t, std::size_t)>
-      derivCheckFunc;
-  inline static std::vector<double> inputs;
-  inline static std::vector<double *> weights;
-  inline static std::vector<double> weightsData;
-  inline static size_t direction;
-
-  static void registerProblem(
-      const std::string &funcName, const std::string &fileName,
+  BenchmarkProblem(
+      const size_t inDim, const size_t outDim, const size_t derivOrder,
+      const std::string &funcName,
       const std::function<std::vector<adouble>(const std::vector<adouble> &)>
-          funcAdouble,
+          &funcAdouble,
       const std::function<std::vector<double>(const std::vector<double> &)>
-          funcDouble,
-      const std::function<std::vector<double>(
-          const std::vector<double> &, std::size_t, std::size_t, std::size_t)>
-          checkFunc,
-      const size_t inDim = 1, const size_t outDim = 1, int derivOrder = 10,
-      const size_t tries = 10) {
-    functionName = funcName;
-    createOutputfile(fileName);
-    setDimensions(inDim, outDim);
-    setNumTries(tries);
-    testfunc_adouble = std::move(funcAdouble);
-    testfunc_double = std::move(funcDouble);
-    derivCheckFunc = std::move(checkFunc);
-
-    // Create random input
-    inputs.resize(InDim);
-    std::random_device rd;
-    std::mt19937 gen(42);
-    std::uniform_real_distribution<double> dist(-10.0, 10.0);
-    std::generate(inputs.begin(), inputs.end(), [&]() { return dist(gen); });
-
-    // Identity matrix for fov_reverse pass
-    weights = std::vector<double *>(OutDim);
-    weightsData = std::vector<double>(OutDim * OutDim, 0.0);
-    for (size_t i = 0; i < OutDim; i++) {
-      weights[i] = weightsData.data() + i * OutDim;
-      weightsData[i * OutDim + i] = 1.0;
-    }
-
-    // Highest derivative Order for forward+reverse pass and derivative
-    // direction
-    highestDeriv = derivOrder;
-    assert(1 <= direction <= InDim);
+          &funcDouble,
+      const std::function<std::vector<double>(const std::vector<double> &,
+                                              std::size_t, std::size_t,
+                                              std::size_t)> &checkFunc,
+      const size_t numtries = 10)
+      : InDim(inDim), OutDim(outDim), highestDeriv(derivOrder),
+        functionName(funcName), testfunc_adouble(funcAdouble),
+        testfunc_double(funcDouble), derivCheckFunc(checkFunc) {
+    setNumTries(numtries);
+    setInput(inDim, false);
     direction = 1 + InDim / 2;
+  }
+
+  void setInput(size_t inDim, bool random) {
+    if (random) {
+      input.resize(inDim);
+      std::random_device rd;
+      std::mt19937 gen(42);
+      std::uniform_real_distribution<double> dist(-10.0, 10.0);
+      std::generate(input.begin(), input.end(), [&]() { return dist(gen); });
+    } else {
+      input = std::vector<double>(inDim, 0.5);
+    }
+  }
+
+  static void setNumTries(size_t tries) { num_tries = tries; }
+};
+
+struct Benchmark {
+  inline static std::filesystem::path filepath;
+  inline static size_t num_tries;
+  inline static std::unordered_map<std::string, BenchmarkProblem> problems;
+
+  static void
+  registerProblem(const std::string funcName, const BenchmarkProblem &specs,
+                  const std::filesystem::path outputFilePath = filepath,
+                  const size_t tries = 10) {
+    problems.insert_or_assign(funcName, specs);
+    createOutputfile(outputFilePath);
+    setNumTries(tries);
   };
 
   short tapeId{-1};
-  std::vector<double> out{};
-  std::vector<double *> grad{};
-  std::vector<double> gradData{};
-  double ***forwardTaylors{nullptr};
-  double ***reverseTaylors{nullptr};
+  std::string function_key;
 
-  ~Benchmarkproblem() {
-    if (forwardTaylors) {
-      myfree3(forwardTaylors);
-    }
-    if (reverseTaylors) {
-      myfree3(reverseTaylors);
-    }
-  }
-  Benchmarkproblem()
-      : tapeId(createNewTape()), out(OutDim), grad(OutDim),
-        gradData(OutDim * InDim) {
-    for (size_t i = 0; i < OutDim; i++) {
-      grad[i] = gradData.data() + i * InDim;
-    }
+  Benchmark(const std::string &funcKey)
+      : tapeId(createNewTape()), function_key(funcKey) {
+    assert(problems.find(funcKey) != problems.end());
   };
   void taping() {
+    auto &prob = problems.at(function_key);
+    std::vector<double> out(prob.OutDim);
+
     setCurrentTape(tapeId);
     {
-      std::vector<adouble> indeps(InDim);
+      std::vector<adouble> indeps(prob.InDim);
 
       auto start1 = std::chrono::high_resolution_clock::now();
 
       trace_on(tapeId);
       {
-        indeps <<= inputs;
+        indeps <<= prob.input;
 
-        std::vector<adouble> result = testfunc_adouble(indeps);
+        std::vector<adouble> result = prob.testfunc_adouble(indeps);
 
         result >>= out;
       }
       trace_off();
 
-      times_taping.push_back(
+      prob.times_taping.push_back(
           std::chrono::duration<double>(
               std::chrono::high_resolution_clock::now() - start1)
               .count());
     }
   }
   void forwardPass() {
+    auto &prob = problems.at(function_key);
+    std::vector<double> out(prob.OutDim);
     // Timing
     auto start = std::chrono::high_resolution_clock::now();
 
-    zos_forward(tapeId, OutDim, InDim, 1, inputs.data(), out.data());
+    zos_forward(tapeId, prob.OutDim, prob.InDim, 1, prob.input.data(),
+                out.data());
 
-    times_forward.push_back(
+    prob.times_forward.push_back(
         std::chrono::duration<double>(
             std::chrono::high_resolution_clock::now() - start)
             .count());
 
     // Error
-    std::vector<double> trueVal = testfunc_double(inputs);
+    std::vector<double> trueVal = prob.testfunc_double(prob.input);
     double zos_error = std::abs(trueVal[0] - out[0]);
     for (size_t i = 1; i < out.size(); i++) {
       zos_error = std::max(std::abs(trueVal[i] - out[i]), zos_error);
     }
-    evaluation_error.push_back(zos_error);
+    prob.evaluation_error.push_back(zos_error);
   }
   void reversePass() {
+    auto &prob = problems.at(function_key);
+    // Prepare gradient output
+    std::vector<double *> grad(prob.OutDim);
+    std::vector<double> gradData(prob.OutDim * prob.InDim);
+    for (size_t i = 0; i < prob.OutDim; i++) {
+      grad[i] = gradData.data() + i * prob.InDim;
+    }
+
+    // Identity matrix for reverse pass
+    std::vector<double *> weights(prob.OutDim);
+    std::vector<double> weightsData(prob.OutDim * prob.OutDim, 0.0);
+    for (size_t i = 0; i < prob.OutDim; i++) {
+      weights[i] = weightsData.data() + i * prob.OutDim;
+      weightsData[i * prob.OutDim + i] = 1.0;
+    }
+
     // Timing
     auto start = std::chrono::high_resolution_clock::now();
 
-    fov_reverse(tapeId, OutDim, InDim, OutDim, weights.data(), grad.data());
+    fov_reverse(tapeId, prob.OutDim, prob.InDim, prob.OutDim, weights.data(),
+                grad.data());
 
-    times_reverse.push_back(
+    prob.times_reverse.push_back(
         std::chrono::duration<double>(
             std::chrono::high_resolution_clock::now() - start)
             .count());
 
     // Error
     double fov_rev_error{0.0};
+    std::vector<double> trueVal;
 
-    // First row of Jacobian (or just the gradient)
-    std::vector<double> trueVal = derivCheckFunc(inputs, 1, 1, 1);
-    for (size_t i = 0; i < trueVal.size(); i++) {
-      fov_rev_error =
-          std::max(std::abs(trueVal[i] - grad[0][i]), fov_rev_error);
-    }
-
-    // Rest of Jacobian (if existing)
-    for (size_t i = 1; i < OutDim; i++) {
-      trueVal = derivCheckFunc(inputs, 1, 1, i + 1);
-      for (size_t j = 0; j < InDim; j++) {
+    // Find max error of jacobian
+    for (size_t i = 0; i < prob.OutDim; i++) {
+      trueVal = prob.derivCheckFunc(prob.input, 1, 1, i + 1);
+      for (size_t j = 0; j < prob.InDim; j++) {
         fov_rev_error =
             std::max(std::abs(trueVal[j] - grad[i][j]), fov_rev_error);
       }
     }
 
-    jacobian_error.push_back(fov_rev_error);
+    prob.jacobian_error.push_back(fov_rev_error);
   }
-  void higherDerivPass(int order = highestDeriv) {
+  void higherDerivPass() {
+    auto &prob = problems.at(function_key);
+    size_t order = prob.highestDeriv;
     assert(order > 1);
-    int numDir = 1;
-    size_t numWeights = OutDim;
-
-    // Derivative direction
-    double ***tangentVector = myalloc3(InDim, numDir, order - 1);
-    for (int i = 0; i < InDim; ++i) {
-      for (int j = 0; j < order - 1; ++j) {
-        tangentVector[i][0][j] = 0.0;
-      }
-    }
-    tangentVector[direction - 1][0][0] = 1.0;
+    size_t numDir = 1;
+    size_t numWeights = prob.OutDim;
 
     // Normal function Output, that doesn't matter
-    std::vector<double> bufferOutput(OutDim);
+    std::vector<double> bufferOutput(prob.OutDim);
+
+    // Derivative direction
+    std::vector<double **> tangentVector(prob.InDim);
+    std::vector<double *> tangentVector_slices(prob.InDim * numDir);
+    std::vector<double> tangenVector_data(prob.InDim * numDir * (order - 1),
+                                          0.0);
+    for (size_t i = 0; i < prob.InDim; i++) {
+      tangentVector[i] = tangentVector_slices.data() + i * numDir;
+    }
+    for (size_t i = 0; i < prob.InDim * numDir; i++) {
+      tangentVector_slices[i] = tangenVector_data.data() + i * (order - 1);
+    }
+    tangentVector[prob.direction - 1][0][0] = 1.0;
 
     // Preparing the Taylor coefficient Outputs
-    forwardTaylors = myalloc3(OutDim, numDir, order - 1);
-    reverseTaylors = myalloc3(numWeights, InDim, order);
+    std::vector<double **> forwardTaylors(prob.OutDim);
+    std::vector<double *> for_Tay_Slices(prob.OutDim * numDir);
+    std::vector<double> for_Tay_data(prob.OutDim * numDir * (order - 1));
+    for (size_t i = 0; i < prob.OutDim; i++) {
+      forwardTaylors[i] = for_Tay_Slices.data() + i * numDir;
+    }
+    for (size_t i = 0; i < prob.OutDim * numDir; i++) {
+      for_Tay_Slices[i] = for_Tay_data.data() + i * (order - 1);
+    }
+    std::vector<double **> reverseTaylors(numWeights);
+    std::vector<double *> rev_Tay_Slices(numWeights * prob.InDim);
+    std::vector<double> rev_Tay_data(numWeights * prob.InDim * order);
+    for (size_t i = 0; i < numWeights; i++) {
+      reverseTaylors[i] = rev_Tay_Slices.data() + i * prob.InDim;
+    }
+    for (size_t i = 0; i < numWeights * prob.InDim; i++) {
+      rev_Tay_Slices[i] = rev_Tay_data.data() + i * order;
+    }
 
     // Weights for Gradient (resp. Jacobian) Output
-    double **reverseWeights = myallocI2(numWeights);
+    std::vector<double *> reverseWeights(numWeights);
+    std::vector<double> reverseWeights_data(numWeights * numWeights, 0.0);
+    for (size_t i = 0; i < numWeights; i++) {
+      reverseWeights[i] = reverseWeights_data.data() + i * numWeights;
+    }
+    for (size_t i = 0; i < numWeights; i++) {
+      reverseWeights[i][i] = 1.0;
+    }
 
     // Nonzero output Matrix
-    std::vector<short int> nzData(numWeights * InDim);
+    std::vector<short int> nzData(numWeights * prob.InDim);
     std::vector<short int *> nz(numWeights);
     for (size_t i = 0; i < numWeights; i++) {
-      nz[i] = nzData.data() + i * InDim;
+      nz[i] = nzData.data() + i * prob.InDim;
     }
 
     // Timing
     auto start = std::chrono::high_resolution_clock::now();
 
-    hov_wk_forward(tapeId, OutDim, InDim, order - 1, order, numDir,
-                   inputs.data(), tangentVector, bufferOutput.data(),
-                   forwardTaylors);
+    hov_wk_forward(tapeId, prob.OutDim, prob.InDim, order - 1, order, numDir,
+                   prob.input.data(), tangentVector.data(), bufferOutput.data(),
+                   forwardTaylors.data());
 
-    hov_reverse(tapeId, OutDim, InDim, order - 1, numWeights, reverseWeights,
-                reverseTaylors, nz.data());
+    hov_reverse(tapeId, prob.OutDim, prob.InDim, order - 1, numWeights,
+                reverseWeights.data(), reverseTaylors.data(), nz.data());
 
-    times_higher_deriv.push_back(
+    prob.times_higher_deriv.push_back(
         std::chrono::duration<double>(
             std::chrono::high_resolution_clock::now() - start)
             .count());
 
-    // Freeing Necessary Ressources
-    free(tangentVector);
-    myfreeI2(OutDim, reverseWeights);
-
     // Error
     double fov_rev_error{0.0};
+    std::vector<double> trueVal;
 
-    // First row of Jacobian (or just the gradient) after 9x forward
-    std::vector<double> trueVal =
-        derivCheckFunc(inputs, static_cast<size_t>(order), direction, 1);
-    for (size_t j = 0; j < trueVal.size(); j++) {
-      fov_rev_error =
-          std::max(std::abs(trueVal[j] - factorial(order - 1) *
-                                             reverseTaylors[0][j][order - 1]),
-                   fov_rev_error);
-    }
-
-    // Rest of Jacobian (if existing)
-    for (size_t i = 1; i < OutDim; i++) {
-      trueVal =
-          derivCheckFunc(inputs, static_cast<size_t>(order), direction, i + 1);
+    // Find max error of jacobian
+    for (size_t i = 0; i < prob.OutDim; i++) {
+      trueVal = prob.derivCheckFunc(prob.input, order, prob.direction, i + 1);
       for (size_t j = 0; j < trueVal.size(); j++) {
         fov_rev_error =
             std::max(std::abs(trueVal[j] - factorial(order - 1) *
@@ -297,123 +316,137 @@ struct Benchmarkproblem {
       }
     }
 
-    higher_deriv_error.push_back(fov_rev_error);
+    prob.higher_deriv_error.push_back(fov_rev_error);
   }
   void recordTapeStats() {
+    auto &prob = problems.at(function_key);
     auto tape_stats = tapestats(tapeId);
-    numTays.push_back(tape_stats[TapeInfos::NUM_TAYS]);
-    numOps.push_back(tape_stats[TapeInfos::NUM_OPERATIONS]);
-    numLocs.push_back(tape_stats[TapeInfos::NUM_LOCATIONS]);
-    numVals.push_back(tape_stats[TapeInfos::NUM_VALUES]);
+    prob.numTays.push_back(tape_stats[TapeInfos::NUM_TAYS]);
+    prob.numOps.push_back(tape_stats[TapeInfos::NUM_OPERATIONS]);
+    prob.numLocs.push_back(tape_stats[TapeInfos::NUM_LOCATIONS]);
+    prob.numVals.push_back(tape_stats[TapeInfos::NUM_VALUES]);
   }
-  static void setDimensions(size_t inDim, size_t outDim) {
-    InDim = inDim;
-    OutDim = outDim;
-  }
-  static void setNumTries(size_t tries) { num_tries = tries; }
-  static void zeroStats() {
-    times_taping.clear();
-    times_forward.clear();
-    times_reverse.clear();
-    times_higher_deriv.clear();
-
-    numTays.clear();
-    numOps.clear();
-    numLocs.clear();
-    numVals.clear();
-
-    evaluation_error.clear();
-    jacobian_error.clear();
-    higher_deriv_error.clear();
-  }
-  static void createOutputfile(const std::string &fileName) {
-    filename = fileName;
-    if (!std::filesystem::exists(filename)) {
-      std::ofstream file(filename);
-      if (file.is_open()) {
-        file << "Function,"
-             << "Med Taping Time,"
-             << "Med Forward Time,"
-             << "Med Reverse Time,"
-             << "Med Higher Deriv Time,"
-             << "(Min) NumTays,"
-             << "(Min) NumOps,"
-             << "(Min) NumLocs,"
-             << "(Min) NumVals,"
-             << "(Max) For Error,"
-             << "(Max) Rev Error,"
-             << "(Max) High Error," << std::endl;
-        file.close();
-      } else {
-        std::cerr << "Error: Could not create the output file: " << filename
-                  << std::endl;
-      }
+  static void setNumTries(size_t tries) {
+    num_tries = tries;
+    if (tries != BenchmarkProblem::num_tries) {
+      BenchmarkProblem::setNumTries(tries);
+      std::cout << "Warning: Changed number of tries for all problems"
+                << std::endl;
     }
   }
-  static void documentStats() {
-    std::ofstream file(filename, std::ios::app);
-    if (file.is_open())
-      file.close();
-
-    double numExp = static_cast<double>(num_tries);
-    std::vector<double> med_times(4);
-    med_times[0] = calculateMedian(times_taping);
-    med_times[1] = calculateMedian(times_forward);
-    med_times[2] = calculateMedian(times_reverse);
-    med_times[3] = calculateMedian(times_higher_deriv);
-
-    file.open(filename, std::ios::app);
-    if (file.is_open()) {
-      file << functionName << "," << med_times[0] << "," << med_times[1] << ","
-           << med_times[2] << "," << med_times[3];
-      file.close();
-    }
-
-    std::vector<size_t> min_stats(4);
-    min_stats[0] = calculateMin(numTays);
-    min_stats[1] = calculateMin(numOps);
-    min_stats[2] = calculateMin(numLocs);
-    min_stats[3] = calculateMin(numVals);
-    std::vector<size_t> max_stats(4);
-    max_stats[0] = calculateMax(numTays);
-    max_stats[1] = calculateMax(numOps);
-    max_stats[2] = calculateMax(numLocs);
-    max_stats[3] = calculateMax(numVals);
-
-    file.open(filename, std::ios::app);
-    if (file.is_open()) {
-      for (size_t i = 0; i < min_stats.size(); i++) {
-        if (min_stats[i] == max_stats[i]) {
-          file << "," << min_stats[i];
-        } else {
-          file << "," << 0;
-        }
-      }
-      file.close();
-    }
-
-    std::vector<double> max_errors(3);
-    max_errors[0] = calculateMax(evaluation_error);
-    max_errors[1] = calculateMax(jacobian_error);
-    max_errors[2] = calculateMax(higher_deriv_error);
-
-    file.open(filename, std::ios::app);
-    if (file.is_open()) {
-      file << "," << max_errors[0] << "," << max_errors[1] << ","
-           << max_errors[2] << "," << std::endl;
-      file.close();
-    }
+  static void createOutputfile(const std::filesystem::path &outputFilePath);
+  static void documentMedian(const std::string &functionName);
+  static void documentTapeStats(const std::string &functionName);
+  static void documentErrors(const std::string &functionName);
+  static void documentStats(const std::string &functionName) {
+    documentMedian(functionName);
+    documentTapeStats(functionName);
+    documentErrors(functionName);
   }
   static void runTests() {
-    for (size_t i = 0; i < num_tries; i++) {
-      Benchmarkproblem problem;
-      problem.taping();
-      problem.forwardPass();
-      problem.reversePass();
-      problem.higherDerivPass();
-      problem.recordTapeStats();
+    for (const auto &[key, specs] : problems) {
+      Benchmark problem(key);
+      for (size_t i = 0; i < num_tries; i++) {
+        problem.taping();
+        problem.forwardPass();
+        problem.reversePass();
+        problem.higherDerivPass();
+        problem.recordTapeStats();
+      }
+      documentStats(key);
     }
-    documentStats();
-    zeroStats();
   }
 };
+
+/****************************************************************************/
+/*                                    Outlined functions for easier reading */
+/****************************************************************************/
+void Benchmark::createOutputfile(const std::filesystem::path &outputFilePath) {
+  filepath = outputFilePath;
+  if (!std::filesystem::exists(filepath)) {
+    std::ofstream file(filepath);
+    if (file.is_open()) {
+      file << "Function,"
+           << "Med Taping Time,"
+           << "Med Forward Time,"
+           << "Med Reverse Time,"
+           << "Med Higher Deriv Time,"
+           << "(Min) NumTays,"
+           << "(Min) NumOps,"
+           << "(Min) NumLocs,"
+           << "(Min) NumVals,"
+           << "(Max) For Error,"
+           << "(Max) Rev Error,"
+           << "(Max) High Error," << std::endl;
+      file.close();
+    } else {
+      std::cerr << "Error: Could not create output file: "
+                << filepath.filename() << " in " << filepath.parent_path()
+                << std::endl;
+    }
+  }
+}
+void Benchmark::documentMedian(const std::string &functionName) {
+  std::ofstream file(filepath, std::ios::app);
+  if (file.is_open())
+    file.close();
+
+  double numExp = static_cast<double>(num_tries);
+  std::vector<double> med_times(4);
+  med_times[0] = calculateMedian(problems.at(functionName).times_taping);
+  med_times[1] = calculateMedian(problems.at(functionName).times_forward);
+  med_times[2] = calculateMedian(problems.at(functionName).times_reverse);
+  med_times[3] = calculateMedian(problems.at(functionName).times_higher_deriv);
+
+  file.open(filepath, std::ios::app);
+  if (file.is_open()) {
+    file << functionName << "," << med_times[0] << "," << med_times[1] << ","
+         << med_times[2] << "," << med_times[3];
+    file.close();
+  }
+}
+void Benchmark::documentTapeStats(const std::string &functionName) {
+  std::ofstream file(filepath, std::ios::app);
+  if (file.is_open())
+    file.close();
+
+  std::vector<size_t> min_stats(4);
+  min_stats[0] = calculateMin(problems.at(functionName).numTays);
+  min_stats[1] = calculateMin(problems.at(functionName).numOps);
+  min_stats[2] = calculateMin(problems.at(functionName).numLocs);
+  min_stats[3] = calculateMin(problems.at(functionName).numVals);
+  std::vector<size_t> max_stats(4);
+  max_stats[0] = calculateMax(problems.at(functionName).numTays);
+  max_stats[1] = calculateMax(problems.at(functionName).numOps);
+  max_stats[2] = calculateMax(problems.at(functionName).numLocs);
+  max_stats[3] = calculateMax(problems.at(functionName).numVals);
+
+  file.open(filepath, std::ios::app);
+  if (file.is_open()) {
+    for (size_t i = 0; i < min_stats.size(); i++) {
+      if (min_stats[i] == max_stats[i]) {
+        file << "," << min_stats[i];
+      } else {
+        file << "," << 0;
+      }
+    }
+    file.close();
+  }
+}
+void Benchmark::documentErrors(const std::string &functionName) {
+  std::ofstream file(filepath, std::ios::app);
+  if (file.is_open())
+    file.close();
+
+  std::vector<double> max_errors(3);
+  max_errors[0] = calculateMax(problems.at(functionName).evaluation_error);
+  max_errors[1] = calculateMax(problems.at(functionName).jacobian_error);
+  max_errors[2] = calculateMax(problems.at(functionName).higher_deriv_error);
+
+  file.open(filepath, std::ios::app);
+  if (file.is_open()) {
+    file << "," << max_errors[0] << "," << max_errors[1] << "," << max_errors[2]
+         << "," << std::endl;
+    file.close();
+  }
+}

@@ -155,12 +155,12 @@ std::vector<double> rosenbrockDeriv(const std::vector<double> &indep,
   return result;
 }
 
-template <typename T> std::vector<T> nonlinear(const std::vector<T> &indep) {
+template <typename T> std::vector<T> expsinlog(const std::vector<T> &indep) {
   T result = sin(exp(indep[0])) + log(indep[0] * indep[0] + 1.0);
   return {result};
 }
 
-std::vector<double> nonlinearDeriv(const std::vector<double> &indep,
+std::vector<double> expsinlogDeriv(const std::vector<double> &indep,
                                    std::size_t n, std::size_t dir = 1,
                                    std::size_t comp = 0) {
   int order = n;

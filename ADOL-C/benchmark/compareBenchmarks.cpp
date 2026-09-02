@@ -4,19 +4,43 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+bool qualityControl(std::vector<double> &improvements,
+                    double improvement_threshold) {
+  double sum_improv{0.0};
+  for (auto &improv : improvements) {
+    sum_improv += improv;
+  }
+  sum_improv /= static_cast<double>(improvements.size());
+
+  return sum_improv >= (1.0 - improvement_threshold);
+}
+
+void printTable(const std::filesystem::path &outputFilePath) {
+  std::ifstream file(outputFilePath);
+  if (!file.is_open()) {
+    std::cerr << "Error: Could not open the output file: " << outputFilePath
+              << std::endl;
+    return;
+  }
+
+  std::string line;
+  while (std::getline(file, line)) {
+    std::cout << line << std::endl;
+  }
+  file.close();
+}
+
 struct BenchmarkData {
-  static double tolerance;
+  inline static double tolerance{1e-8};
 
-  std::string benchfile;
+  std::filesystem::path benchfile;
   std::vector<std::string> categories;
-  std::vector<std::string> functions;
-  std::vector<double *>
-      function_data; // replace with dictionary-type using functions !!
-  std::vector<double> rawdata;
+  std::unordered_map<std::string, std::vector<double>> function_data_map;
 
-  BenchmarkData(std::string filename) : benchfile(std::move(filename)) {
+  BenchmarkData(std::string filepath) : benchfile(std::move(filepath)) {
     if (!std::filesystem::exists(benchfile)) {
       std::cerr << "Error: Benchmark file  '" << benchfile
                 << "' does not exist.";
@@ -44,19 +68,17 @@ struct BenchmarkData {
       // Get function name
       std::string name;
       std::getline(ss, name, ',');
-      functions.emplace_back(name);
 
       // Get associated performance values
       std::string value;
+      std::vector<double> data;
       while (std::getline(ss, value, ',')) {
         if (!value.empty()) {
-          rawdata.push_back(std::stod(value));
+          data.push_back(std::stod(value));
         }
       }
+      function_data_map[name] = data;
     }
-    // Set pointer to data
-    for (size_t i = 0; i < functions.size(); i++)
-      function_data.emplace_back(rawdata.data() + i * categories.size());
   }
   void printData() const {
     std::cout << "Data scanned from file '" << benchfile << "\n";
@@ -66,10 +88,10 @@ struct BenchmarkData {
     }
     std::cout << std::endl;
 
-    for (size_t i = 0; i < functions.size(); i++) {
-      std::cout << functions[i] << ",";
-      for (size_t j = 0; j < categories.size(); j++) {
-        std::cout << function_data[i][j] << ",";
+    for (const auto &[key, value] : function_data_map) {
+      std::cout << key << ",";
+      for (size_t j = 0; j < value.size(); j++) {
+        std::cout << value[j] << ",";
       }
       std::cout << std::endl;
     }
@@ -79,43 +101,90 @@ struct BenchmarkData {
       if (categories[i] != other.categories[i])
         return false;
     }
-    for (size_t i = 0; i < functions.size(); i++) {
-      if (functions[i] != other.functions[i])
+    for (const auto &[key, value] : function_data_map) {
+      if (!other.function_data_map.contains(key)) {
         return false;
+      }
     }
     return (categories.size() == other.categories.size() &&
-            functions.size() == other.functions.size());
+            function_data_map.size() == other.function_data_map.size());
   }
-  bool compare(const BenchmarkData &other) const {
-    if (!comparable(other)) {
-      std::cerr << "The two datasets are not comparable." << std::endl;
+  static std::filesystem::path
+  createComparisonFile(const std::filesystem::path &savedir,
+                       const std::string &base_filename,
+                       const std::string &update_filename) {
+    if (!std::filesystem::exists(savedir)) {
+      std::cerr << "Error: Saving directory " << savedir << " does not exist."
+                << std::endl;
+      return "";
+    }
+    if (!std::filesystem::is_directory(savedir)) {
+      std::cerr << "Error: Saving directory " << savedir
+                << " is not a directory." << std::endl;
+      return "";
     }
 
     // Prepare outputfile
-    std::string outputFile = benchfile;
+    std::string outputFileName = base_filename;
 
-    if (outputFile.ends_with(".txt")) {
-      outputFile.erase(outputFile.size() - 4);
+    if (outputFileName.ends_with(".txt")) {
+      outputFileName.erase(outputFileName.size() - 4);
     }
-    outputFile += "_compared_to_" + other.benchfile;
-    if (outputFile.ends_with(".txt")) {
-      outputFile.erase(outputFile.size() - 4);
+    outputFileName += "_compared_to_" + update_filename;
+    if (outputFileName.ends_with(".txt")) {
+      outputFileName.erase(outputFileName.size() - 4);
     }
-    if (!outputFile.ends_with(".md")) {
-      outputFile += ".md";
+    if (!outputFileName.ends_with(".md")) {
+      outputFileName += ".md";
     }
 
-    if (!std::filesystem::exists(outputFile)) {
-      std::ofstream file(outputFile);
+    auto outputFilePath = savedir / outputFileName;
+
+    if (!std::filesystem::exists(outputFilePath)) {
+      std::ofstream file(outputFilePath);
       if (file.is_open()) {
         file << "# Benchmark comparison." << std::endl;
         file.close();
       } else {
-        std::cerr << "Error: Could not create the output file: " << outputFile
-                  << std::endl;
+        std::cerr << "Error: Could not create the output file: "
+                  << outputFileName << " in " << savedir << std::endl;
       }
     }
-    std::ofstream file(outputFile, std::ios::app);
+    return outputFilePath;
+  }
+  static bool toleranceCheck(const BenchmarkData &base,
+                             const BenchmarkData &update) {
+    for (const auto &[key, value] : base.function_data_map) {
+      for (size_t i = base.categories.size() - 1;
+           i > base.categories.size() - 3; i--) {
+        if (update.function_data_map.at(key).at(i) > tolerance ||
+            value[i] > tolerance) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+  bool compare(
+      const BenchmarkData &other,
+      const std::filesystem::path &savedir = std::filesystem::current_path(),
+      const double improvement_threshold = 0.15) const {
+    if (!comparable(other)) {
+      std::cerr << "The two datasets are not comparable." << std::endl;
+      return false;
+    }
+
+    std::filesystem::path outputFilePath =
+        createComparisonFile(savedir, benchfile.filename().string(),
+                             other.benchfile.filename().string());
+
+    if (outputFilePath.empty()) {
+      std::cerr << "Error: Could not create output file for comparison."
+                << std::endl;
+      return false;
+    }
+
+    std::ofstream file(outputFilePath, std::ios::app);
     // Check if there is data.
     if (categories.size() == 0) {
       file << "No data to compare." << std::endl;
@@ -136,15 +205,15 @@ struct BenchmarkData {
 
     // Compare data
     std::vector<double> improvements;
-    for (size_t i = 0; i < functions.size(); i++) {
-      std::ofstream file(outputFile, std::ios::app);
-      file << "|" << functions[i];
+    for (const auto &[key, value] : function_data_map) {
+      std::ofstream file(outputFilePath, std::ios::app);
+      file << "|" << key;
       for (size_t j = 0; j < categories.size(); j++) {
         file << " | ";
         double quotient;
 
-        double upd_data_pt = other.function_data[i][j];
-        double base_data_pt = function_data[i][j];
+        double upd_data_pt = other.function_data_map.at(key).at(j);
+        double base_data_pt = value[j];
         if (upd_data_pt == 0.0 && base_data_pt == 0.0) {
           quotient = 1.0;
         } else if (upd_data_pt == 0.0) {
@@ -154,8 +223,8 @@ struct BenchmarkData {
         }
         file << std::setprecision(3) << quotient;
 
-        if (quotient >= 1.0) {
-          improvements.push_back(1.0);
+        if (quotient > 1.0 + improvement_threshold) {
+          improvements.push_back(1.0 + improvement_threshold);
         } else {
           improvements.push_back(quotient);
         }
@@ -165,70 +234,107 @@ struct BenchmarkData {
     }
 
     // Check tolerance margin for errors
-    for (size_t i = categories.size() - 1; i > categories.size() - 4; i--) {
-      for (size_t j = 0; j < functions.size(); j++) {
-        if (other.function_data[j][i] > tolerance)
-          return false;
-      }
+    if (!toleranceCheck(*this, other)) {
+      return false;
     }
 
-    double sum_improv{0.0};
-    for (auto &improv : improvements) {
-      sum_improv += improv;
-    }
-    sum_improv /= static_cast<double>(improvements.size());
+    // Create verdict based on improvements
+    bool better = qualityControl(improvements, improvement_threshold);
 
-    return sum_improv >= 0.85;
+    if (!better) {
+      printTable(outputFilePath);
+    }
+
+    return better;
   }
+  static void setTolerance(double tol) { tolerance = tol; }
 };
 
-double BenchmarkData::tolerance = 1e-8;
-
 int main(int argc, char *argv[]) {
-  std::string baseline;
-  std::string update;
+  std::filesystem::path baseline;
+  std::filesystem::path update;
+  std::filesystem::path savedir = std::filesystem::current_path();
+  double tol;
+  double improvement_threshold;
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
 
-    if (arg == "-baseline") {
+    if (arg == "-baseline" || arg == "-b") {
       if (i + 1 >= argc) {
-        std::cerr << "Error: -baseline requires a filename\n";
+        std::cerr << "Error: -baseline requires a filepath\n";
         return 1;
       }
 
-      baseline = argv[++i];
-    } else if (arg == "-update") {
+      baseline = std::filesystem::path(argv[++i]);
+      if (!std::filesystem::exists(baseline)) {
+        std::cerr << "Error: -baseline " << baseline
+                  << " file does not exist\n";
+        return 1;
+      }
+    } else if (arg == "-update" || arg == "-u") {
       if (i + 1 >= argc) {
-        std::cerr << "Error: -update requires a filename\n";
+        std::cerr << "Error: -update requires a filepath\n";
         return 1;
       }
 
-      update = argv[++i];
+      update = std::filesystem::path(argv[++i]);
+      if (!std::filesystem::exists(update)) {
+        std::cerr << "Error: -update " << update << " file does not exist\n";
+        return 1;
+      }
+    } else if (arg == "-savedir" || arg == "-sd") {
+      if (i + 1 >= argc) {
+        std::cerr << "Error: -savedir requires a filepath\n";
+        return 1;
+      }
+
+      savedir = std::filesystem::path(argv[++i]);
+      if (!std::filesystem::exists(savedir)) {
+        std::cerr << "Error: -savedir " << savedir
+                  << " directory does not exist\n";
+        return 1;
+      }
+    } else if (arg == "-tol" || arg == "-t") {
+      if (i + 1 >= argc) {
+        std::cout << "Error: -tol requires a double value\n";
+      }
+
+      tol = std::stod(argv[++i]);
+      if (tol > 1e-2) {
+        std::cout << "Warning: -tol value " << tol
+                  << " is too high. Proceeding with usual tolerance of 1e-8."
+                  << std::endl;
+      } else {
+        BenchmarkData::setTolerance(tol);
+      }
+    } else if (arg == "-improvement" || arg == "-imp") {
+      if (i + 1 >= argc) {
+        std::cout << "Error: -improvement requires a double value\n";
+      }
+
+      improvement_threshold = std::stod(argv[++i]);
+      if (improvement_threshold < 0.0) {
+        std::cout << "Warning: given improvement value is negative."
+                  << " Proceeding with default value of 0.05." << std::endl;
+        improvement_threshold = 0.05;
+      }
     } else {
       std::cerr << "Error: unknown argument: " << arg << '\n';
       return 1;
     }
   }
 
-  BenchmarkData dataset1(baseline);
-  /* dataset1.printData(); */
-  BenchmarkData dataset2(update);
-  /* dataset2.printData(); */
-
-  /* if (dataset1.comparable(dataset2)) {
-    std::cout << "Files are comparable.\n";
-  } else {
-    std::cout << "Files are not comparable.\n";
-  } */
+  BenchmarkData basedata(baseline);
+  BenchmarkData updatedata(update);
 
   bool verdict;
-  verdict = dataset1.compare(dataset2);
+  verdict = basedata.compare(updatedata, savedir, improvement_threshold);
 
   if (verdict) {
     std::cout << "Improvements were made." << std::endl;
   } else {
-    std::cout << "General worse results." << std::endl;
+    std::cout << "Generally worse results." << std::endl;
   }
 
   // 0 Success, 1 Failure.

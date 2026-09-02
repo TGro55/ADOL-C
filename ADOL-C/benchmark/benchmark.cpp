@@ -1,48 +1,57 @@
 #include "benchmark.h"
 #include "functionlib.h"
+#include <filesystem>
 #include <string>
 
 int main(int argc, char *argv[]) {
-  std::string outputFile;
+  // Parse command line arguments
+  std::filesystem::path outputFile;
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
 
     if ((arg == "-o" || arg == "-output") && i + 1 < argc) {
-      outputFile = argv[++i];
+      outputFile = std::filesystem::path(argv[++i]);
     }
   }
 
-  if (outputFile.size() == 0) {
-    outputFile = "benchmarkResults";
+  if (outputFile.empty()) {
+    outputFile = std::filesystem::path("benchmark_results.txt");
   }
-  if (!outputFile.ends_with(".txt")) {
-    outputFile.append(".txt");
-  }
-
-  {
-    Benchmarkproblem::registerProblem(
-        "rosenbrock", outputFile, benchmarkFunctions::rosenbrock<adouble>,
-        benchmarkFunctions::rosenbrock<double>,
-        benchmarkFunctions::rosenbrockDeriv, 1000, 1, 4);
-    Benchmarkproblem::runTests();
+  if (!outputFile.filename().string().ends_with(".txt")) {
+    outputFile += ".txt";
   }
 
-  {
-    Benchmarkproblem::registerProblem("expsinlog", outputFile,
-                                      benchmarkFunctions::nonlinear<adouble>,
-                                      benchmarkFunctions::nonlinear<double>,
-                                      benchmarkFunctions::nonlinearDeriv),
-        Benchmarkproblem::runTests();
-  }
+  // BenchmarkProblems
+  BenchmarkProblem cosines = {1000,
+                              1000,
+                              10,
+                              "cosines",
+                              benchmarkFunctions::Cosines<adouble>,
+                              benchmarkFunctions::Cosines<double>,
+                              benchmarkFunctions::CosinesDeriv};
+  BenchmarkProblem expsinlog = {1,
+                                1,
+                                10,
+                                "expsinlog",
+                                benchmarkFunctions::expsinlog<adouble>,
+                                benchmarkFunctions::expsinlog<double>,
+                                benchmarkFunctions::expsinlogDeriv};
+  BenchmarkProblem rosenbrock = {100000,
+                                 1,
+                                 4,
+                                 "rosenbrock",
+                                 benchmarkFunctions::rosenbrock<adouble>,
+                                 benchmarkFunctions::rosenbrock<double>,
+                                 benchmarkFunctions::rosenbrockDeriv};
 
-  {
-    Benchmarkproblem::registerProblem(
-        "cosines", outputFile, benchmarkFunctions::Cosines<adouble>,
-        benchmarkFunctions::Cosines<double>, benchmarkFunctions::CosinesDeriv,
-        1000, 1000, 10);
-    Benchmarkproblem::runTests();
-  }
+  // Registering the Problems
+  Benchmark::registerProblem(rosenbrock.functionName, rosenbrock, outputFile);
+  Benchmark::registerProblem(expsinlog.functionName, expsinlog);
+  Benchmark::registerProblem(cosines.functionName, cosines);
+
+  // Run tests
+  Benchmark::runTests();
 
   return 0;
 }
