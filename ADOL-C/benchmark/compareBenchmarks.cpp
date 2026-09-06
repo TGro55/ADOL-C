@@ -35,12 +35,14 @@ void printTable(const std::filesystem::path &outputFilePath) {
 
 struct BenchmarkData {
   inline static double tolerance{1e-8};
+  static constexpr std::string_view delimiter = "|";
 
   std::filesystem::path benchfile;
   std::vector<std::string> categories;
   std::unordered_map<std::string, std::vector<double>> function_data_map;
 
-  BenchmarkData(std::string filepath) : benchfile(std::move(filepath)) {
+  BenchmarkData(std::filesystem::path filepath)
+      : benchfile(std::move(filepath)) {
     if (!std::filesystem::exists(benchfile)) {
       std::cerr << "Error: Benchmark file  '" << benchfile
                 << "' does not exist.";
@@ -152,6 +154,28 @@ struct BenchmarkData {
     }
     return outputFilePath;
   }
+  bool createTable(const std::filesystem::path &outputFilePath) const {
+    std::ofstream file(outputFilePath, std::ios::app);
+    // Check if there is data.
+    if (categories.size() == 0) {
+      file << "No data to compare." << std::endl;
+      file.close();
+      return false;
+    }
+    // Setup table
+    file << delimiter << "Function ";
+    for (auto &cat : categories) {
+      file << delimiter << cat;
+    }
+    file << delimiter << std::endl;
+    for (size_t i = 0; i < categories.size() + 1; i++) {
+      file << delimiter << "---";
+    }
+    file << delimiter << std::endl;
+    file.close();
+
+    return true;
+  }
   static bool toleranceCheck(const BenchmarkData &base,
                              const BenchmarkData &update) {
     for (const auto &[key, value] : base.function_data_map) {
@@ -184,39 +208,22 @@ struct BenchmarkData {
       return false;
     }
 
-    std::ofstream file(outputFilePath, std::ios::app);
-    // Check if there is data.
-    if (categories.size() == 0) {
-      file << "No data to compare." << std::endl;
-      file.close();
+    if (!createTable(outputFilePath)) {
       return false;
     }
-    // Setup table
-    file << "|" << "Function ";
-    for (auto &cat : categories) {
-      file << " | " << cat;
-    }
-    file << "|" << std::endl;
-    for (size_t i = 0; i < categories.size() + 1; i++) {
-      file << "|---";
-    }
-    file << "|" << std::endl;
-    file.close();
 
     // Compare data
     std::vector<double> improvements;
     for (const auto &[key, value] : function_data_map) {
       std::ofstream file(outputFilePath, std::ios::app);
-      file << "|" << key;
+      file << delimiter << key;
       for (size_t j = 0; j < categories.size(); j++) {
-        file << " | ";
+        file << delimiter;
         double quotient;
 
         double upd_data_pt = other.function_data_map.at(key).at(j);
         double base_data_pt = value[j];
-        if (upd_data_pt == 0.0 && base_data_pt == 0.0) {
-          quotient = 1.0;
-        } else if (upd_data_pt == 0.0) {
+        if (upd_data_pt == 0.0) {
           quotient = 1.0;
         } else {
           quotient = base_data_pt / upd_data_pt;
@@ -229,18 +236,15 @@ struct BenchmarkData {
           improvements.push_back(quotient);
         }
       }
-      file << "|" << std::endl;
+      file << delimiter << std::endl;
       file.close();
     }
 
-    // Check tolerance margin for errors
     if (!toleranceCheck(*this, other)) {
       return false;
     }
 
-    // Create verdict based on improvements
     bool better = qualityControl(improvements, improvement_threshold);
-
     if (!better) {
       printTable(outputFilePath);
     }
@@ -258,7 +262,7 @@ int main(int argc, char *argv[]) {
   double improvement_threshold;
 
   for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i];
+    std::string_view arg = argv[i];
 
     if (arg == "-baseline" || arg == "-b") {
       if (i + 1 >= argc) {
