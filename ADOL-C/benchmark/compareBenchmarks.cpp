@@ -179,11 +179,12 @@ struct BenchmarkData {
   static bool toleranceCheck(const BenchmarkData &base,
                              const BenchmarkData &update) {
     for (const auto &[key, value] : base.function_data_map) {
-      for (size_t i = base.categories.size() - 1;
-           i > base.categories.size() - 3; i--) {
-        if (update.function_data_map.at(key).at(i) > tolerance ||
-            value[i] > tolerance) {
-          return false;
+      for (size_t i = 0; i < base.categories.size(); i++) {
+        if (base.categories[i].find("Error") != std::string::npos) {
+          if (update.function_data_map.at(key).at(i) > tolerance ||
+              value[i] > tolerance) {
+            return false;
+          }
         }
       }
     }
@@ -228,12 +229,20 @@ struct BenchmarkData {
         } else {
           quotient = base_data_pt / upd_data_pt;
         }
-        file << std::setprecision(3) << quotient;
 
+        // Improvement regulation
         if (quotient > 1.0 + improvement_threshold) {
           improvements.push_back(1.0 + improvement_threshold);
         } else {
           improvements.push_back(quotient);
+        }
+
+        // file output
+        if (quotient >= 1.0) {
+          file << std::setprecision(3) << quotient;
+        } else {
+          file << "$${\\color{red}{" << std::setprecision(3) << quotient
+               << "}}$$";
         }
       }
       file << delimiter << std::endl;

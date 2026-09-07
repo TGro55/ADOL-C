@@ -23,8 +23,8 @@ int main(int argc, char *argv[]) {
   }
 
   // BenchmarkProblems
-  BenchmarkProblem cosines = {1000,
-                              1000,
+  BenchmarkProblem cosines = {100,
+                              100,
                               10,
                               "cosines",
                               benchmarkFunctions::Cosines<adouble>,
@@ -37,7 +37,7 @@ int main(int argc, char *argv[]) {
                                 benchmarkFunctions::expsinlog<adouble>,
                                 benchmarkFunctions::expsinlog<double>,
                                 benchmarkFunctions::expsinlogDeriv};
-  BenchmarkProblem rosenbrock = {100000,
+  BenchmarkProblem rosenbrock = {10000,
                                  1,
                                  4,
                                  "rosenbrock",

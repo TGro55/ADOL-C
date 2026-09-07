@@ -1,5 +1,6 @@
 #include <adolc/adolc.h>
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -23,27 +24,101 @@ static int factorial(int j) {
   return result;
 }
 
-template <typename T>
-T calculateAverage(const std::vector<T> &values, const T &length) {
-  return std::accumulate(values.begin(), values.end(), 0.0) / length;
-}
-template <typename T> T calculateMin(const std::vector<T> &values) {
-  return *std::min_element(values.begin(), values.end());
-}
-template <typename T> T calculateMax(const std::vector<T> &values) {
-  return *std::max_element(values.begin(), values.end());
-}
-template <typename T> T calculateMedian(std::vector<T> values) {
-  std::sort(values.begin(), values.end());
+namespace {
+struct Timings {
+  std::array<double, 4> times;
 
-  if (values.size() % 2 != 0) {
-    return values[values.size() / 2];
+  double &operator[](size_t index) { return times[index]; }
+  const double &operator[](size_t index) const { return times[index]; }
+};
+
+enum TimingType { Taping, Forward, Reverse, HigherDeriv, TimingLength };
+
+struct RelevantTapeNums {
+  std::array<size_t, 4> nums;
+
+  size_t &operator[](size_t index) { return nums[index]; }
+  const size_t &operator[](size_t index) const { return nums[index]; }
+};
+
+enum RelevantTapeNumType { NumTays, NumOps, NumLocs, NumVals, NumTypeLength };
+
+struct BenchmarkErrors {
+  std::array<double, 3> errors;
+
+  double &operator[](size_t index) { return errors[index]; }
+  const double &operator[](size_t index) const { return errors[index]; }
+};
+
+enum BenchmarkErrorType {
+  Evaluation,
+  Jacobian,
+  HigherOrderDeriv,
+  BenchmarkErrorTypeLength
+};
+} // namespace
+
+Timings calculateMedian(const std::vector<Timings> &timings) {
+  Timings median_timings;
+  for (size_t type = 0; type < TimingType::TimingLength; type++) {
+    std::vector<double> values(timings.size());
+    for (size_t j = 0; j < timings.size(); j++) {
+      values[j] = timings[j][type];
+    }
+    std::sort(values.begin(), values.end());
+    if (values.size() % 2 != 0) {
+      median_timings[type] = values[values.size() / 2];
+    } else {
+      median_timings[type] =
+          values[values.size() / 2] + values[values.size() / 2 + 1] / 2.0;
+    }
   }
-  return values[values.size() / 2] +
-         values[values.size() / 2 + 1] / static_cast<T>(2.0);
+  return median_timings;
 }
 
-/* void doNothing() { volatile int tricking = 1; }; */
+RelevantTapeNums calculateMin(const std::vector<RelevantTapeNums> &values) {
+  RelevantTapeNums min_values;
+  for (size_t type = 0; type < RelevantTapeNumType::NumTypeLength; type++) {
+    std::vector<size_t> type_values(values.size());
+    for (size_t j = 0; j < values.size(); j++) {
+      type_values[j] = values[j][type];
+    }
+    min_values[type] =
+        *std::min_element(type_values.begin(), type_values.end());
+  }
+  return min_values;
+}
+
+RelevantTapeNums calculateMax(const std::vector<RelevantTapeNums> &values) {
+  RelevantTapeNums max_values;
+  for (size_t type = 0; type < RelevantTapeNumType::NumTypeLength; type++) {
+    std::vector<size_t> type_values(values.size());
+    for (size_t j = 0; j < values.size(); j++) {
+      type_values[j] = values[j][type];
+    }
+    max_values[type] =
+        *std::max_element(type_values.begin(), type_values.end());
+  }
+  return max_values;
+}
+
+BenchmarkErrors calculateMax(const std::vector<BenchmarkErrors> &values) {
+  BenchmarkErrors max_values;
+  for (size_t type = 0; type < BenchmarkErrorType::BenchmarkErrorTypeLength;
+       type++) {
+    std::vector<double> type_values(values.size());
+    for (size_t j = 0; j < values.size(); j++) {
+      type_values[j] = values[j][type];
+    }
+    max_values[type] =
+        *std::max_element(type_values.begin(), type_values.end());
+  }
+  return max_values;
+}
+
+/* double calculateMax(const std::vector<double> &values) {
+  return *std::max_element(values.begin(), values.end());
+} */
 
 struct BenchmarkProblem {
   inline static size_t num_tries;
@@ -61,24 +136,16 @@ struct BenchmarkProblem {
   std::vector<double> input;
   size_t direction;
 
-  std::vector<double> make_times_vector() {
-    std::vector<double> v;
+  /* std::vector<Timings> reserve_vector() {
+    std::vector<Timings> v;
     v.reserve(num_tries);
     return v;
-  }
+  } */
 
   // Benchmark Data
-  std::vector<double> times_taping = make_times_vector();
-  std::vector<double> times_forward = make_times_vector();
-  std::vector<double> times_reverse = make_times_vector();
-  std::vector<double> times_higher_deriv = make_times_vector();
-  std::vector<size_t> numTays;
-  std::vector<size_t> numOps;
-  std::vector<size_t> numLocs;
-  std::vector<size_t> numVals;
-  std::vector<double> evaluation_error;
-  std::vector<double> jacobian_error;
-  std::vector<double> higher_deriv_error;
+  std::vector<Timings> timings;
+  std::vector<RelevantTapeNums> relevantTapeNums;
+  std::vector<BenchmarkErrors> errors;
 
   BenchmarkProblem(
       const size_t inDim, const size_t outDim, const size_t derivOrder,
@@ -96,7 +163,7 @@ struct BenchmarkProblem {
         testfunc_double(funcDouble), derivCheckFunc(checkFunc) {
     setNumTries(numtries);
     setInput(inDim, false);
-    direction = 1 + InDim / 2;
+    direction = InDim / 2;
   }
 
   void setInput(size_t inDim, bool random) {
@@ -115,6 +182,8 @@ struct BenchmarkProblem {
 };
 
 struct Benchmark {
+  /*  enum BenchmarkErrorType { Evaluation, Jacobian, HigherOrderDeriv }; */
+
   inline static std::filesystem::path filepath;
   inline static size_t num_tries;
   inline static std::unordered_map<std::string, BenchmarkProblem> problems;
@@ -130,6 +199,8 @@ struct Benchmark {
 
   short tapeId{-1};
   std::string function_key;
+  Timings times;
+  BenchmarkErrors errors;
 
   Benchmark(const std::string &funcKey)
       : tapeId(createNewTape()), function_key(funcKey) {
@@ -155,10 +226,10 @@ struct Benchmark {
       }
       trace_off();
 
-      prob.times_taping.push_back(
+      times[TimingType::Taping] =
           std::chrono::duration<double>(
               std::chrono::high_resolution_clock::now() - start1)
-              .count());
+              .count();
     }
   }
   void forwardPass() {
@@ -170,10 +241,10 @@ struct Benchmark {
     zos_forward(tapeId, prob.OutDim, prob.InDim, 1, prob.input.data(),
                 out.data());
 
-    prob.times_forward.push_back(
+    times[TimingType::Forward] =
         std::chrono::duration<double>(
             std::chrono::high_resolution_clock::now() - start)
-            .count());
+            .count();
 
     // Error
     std::vector<double> trueVal = prob.testfunc_double(prob.input);
@@ -181,7 +252,7 @@ struct Benchmark {
     for (size_t i = 1; i < out.size(); i++) {
       zos_error = std::max(std::abs(trueVal[i] - out[i]), zos_error);
     }
-    prob.evaluation_error.push_back(zos_error);
+    errors[BenchmarkErrorType::Evaluation] = zos_error;
   }
   void reversePass() {
     auto &prob = problems.at(function_key);
@@ -206,10 +277,10 @@ struct Benchmark {
     fov_reverse(tapeId, prob.OutDim, prob.InDim, prob.OutDim, weights.data(),
                 grad.data());
 
-    prob.times_reverse.push_back(
+    times[TimingType::Reverse] =
         std::chrono::duration<double>(
             std::chrono::high_resolution_clock::now() - start)
-            .count());
+            .count();
 
     // Error
     double fov_rev_error{0.0};
@@ -217,14 +288,14 @@ struct Benchmark {
 
     // Find max error of jacobian
     for (size_t i = 0; i < prob.OutDim; i++) {
-      trueVal = prob.derivCheckFunc(prob.input, 1, 1, i + 1);
+      trueVal = prob.derivCheckFunc(prob.input, 1, 0, i);
       for (size_t j = 0; j < prob.InDim; j++) {
         fov_rev_error =
             std::max(std::abs(trueVal[j] - grad[i][j]), fov_rev_error);
       }
     }
 
-    prob.jacobian_error.push_back(fov_rev_error);
+    errors[BenchmarkErrorType::Jacobian] = fov_rev_error;
   }
   void higherDerivPass() {
     auto &prob = problems.at(function_key);
@@ -247,7 +318,7 @@ struct Benchmark {
     for (size_t i = 0; i < prob.InDim * numDir; i++) {
       tangentVector_slices[i] = tangenVector_data.data() + i * (order - 1);
     }
-    tangentVector[prob.direction - 1][0][0] = 1.0;
+    tangentVector[prob.direction][0][0] = 1.0;
 
     // Preparing the Taylor coefficient Outputs
     std::vector<double **> forwardTaylors(prob.OutDim);
@@ -296,10 +367,10 @@ struct Benchmark {
     hov_reverse(tapeId, prob.OutDim, prob.InDim, order - 1, numWeights,
                 reverseWeights.data(), reverseTaylors.data(), nz.data());
 
-    prob.times_higher_deriv.push_back(
+    times[TimingType::HigherDeriv] =
         std::chrono::duration<double>(
             std::chrono::high_resolution_clock::now() - start)
-            .count());
+            .count();
 
     // Error
     double fov_rev_error{0.0};
@@ -307,7 +378,7 @@ struct Benchmark {
 
     // Find max error of jacobian
     for (size_t i = 0; i < prob.OutDim; i++) {
-      trueVal = prob.derivCheckFunc(prob.input, order, prob.direction, i + 1);
+      trueVal = prob.derivCheckFunc(prob.input, order, prob.direction, i);
       for (size_t j = 0; j < trueVal.size(); j++) {
         fov_rev_error =
             std::max(std::abs(trueVal[j] - factorial(order - 1) *
@@ -316,15 +387,20 @@ struct Benchmark {
       }
     }
 
-    prob.higher_deriv_error.push_back(fov_rev_error);
+    errors[BenchmarkErrorType::HigherOrderDeriv] = fov_rev_error;
   }
   void recordTapeStats() {
     auto &prob = problems.at(function_key);
+
+    prob.timings.push_back(times);
+
     auto tape_stats = tapestats(tapeId);
-    prob.numTays.push_back(tape_stats[TapeInfos::NUM_TAYS]);
-    prob.numOps.push_back(tape_stats[TapeInfos::NUM_OPERATIONS]);
-    prob.numLocs.push_back(tape_stats[TapeInfos::NUM_LOCATIONS]);
-    prob.numVals.push_back(tape_stats[TapeInfos::NUM_VALUES]);
+    prob.relevantTapeNums.push_back({tape_stats[TapeInfos::NUM_TAYS],
+                                     tape_stats[TapeInfos::NUM_OPERATIONS],
+                                     tape_stats[TapeInfos::NUM_LOCATIONS],
+                                     tape_stats[TapeInfos::NUM_VALUES]});
+
+    prob.errors.push_back(errors);
   }
   static void setNumTries(size_t tries) {
     num_tries = tries;
@@ -391,17 +467,14 @@ void Benchmark::documentMedian(const std::string &functionName) {
   if (file.is_open())
     file.close();
 
-  double numExp = static_cast<double>(num_tries);
-  std::vector<double> med_times(4);
-  med_times[0] = calculateMedian(problems.at(functionName).times_taping);
-  med_times[1] = calculateMedian(problems.at(functionName).times_forward);
-  med_times[2] = calculateMedian(problems.at(functionName).times_reverse);
-  med_times[3] = calculateMedian(problems.at(functionName).times_higher_deriv);
+  auto med_times = calculateMedian(problems.at(functionName).timings);
 
   file.open(filepath, std::ios::app);
   if (file.is_open()) {
-    file << functionName << "," << med_times[0] << "," << med_times[1] << ","
-         << med_times[2] << "," << med_times[3];
+    file << functionName;
+    for (size_t type = 0; type < TimingType::TimingLength; type++) {
+      file << "," << med_times[type];
+    }
     file.close();
   }
 }
@@ -410,24 +483,16 @@ void Benchmark::documentTapeStats(const std::string &functionName) {
   if (file.is_open())
     file.close();
 
-  std::vector<size_t> min_stats(4);
-  min_stats[0] = calculateMin(problems.at(functionName).numTays);
-  min_stats[1] = calculateMin(problems.at(functionName).numOps);
-  min_stats[2] = calculateMin(problems.at(functionName).numLocs);
-  min_stats[3] = calculateMin(problems.at(functionName).numVals);
-  std::vector<size_t> max_stats(4);
-  max_stats[0] = calculateMax(problems.at(functionName).numTays);
-  max_stats[1] = calculateMax(problems.at(functionName).numOps);
-  max_stats[2] = calculateMax(problems.at(functionName).numLocs);
-  max_stats[3] = calculateMax(problems.at(functionName).numVals);
+  auto min_stats = calculateMin(problems.at(functionName).relevantTapeNums);
+  auto max_stats = calculateMax(problems.at(functionName).relevantTapeNums);
 
   file.open(filepath, std::ios::app);
   if (file.is_open()) {
-    for (size_t i = 0; i < min_stats.size(); i++) {
+    for (size_t i = 0; i < RelevantTapeNumType::NumTypeLength; i++) {
       if (min_stats[i] == max_stats[i]) {
         file << "," << min_stats[i];
       } else {
-        file << "," << 0;
+        file << "," << -1;
       }
     }
     file.close();
@@ -438,15 +503,15 @@ void Benchmark::documentErrors(const std::string &functionName) {
   if (file.is_open())
     file.close();
 
-  std::vector<double> max_errors(3);
-  max_errors[0] = calculateMax(problems.at(functionName).evaluation_error);
-  max_errors[1] = calculateMax(problems.at(functionName).jacobian_error);
-  max_errors[2] = calculateMax(problems.at(functionName).higher_deriv_error);
+  auto max_errors = calculateMax(problems.at(functionName).errors);
 
   file.open(filepath, std::ios::app);
   if (file.is_open()) {
-    file << "," << max_errors[0] << "," << max_errors[1] << "," << max_errors[2]
-         << "," << std::endl;
+    for (size_t type = 0; type < BenchmarkErrorType::BenchmarkErrorTypeLength;
+         type++) {
+      file << "," << max_errors[type];
+    }
+    file << std::endl;
     file.close();
   }
 }

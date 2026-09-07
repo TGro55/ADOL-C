@@ -81,18 +81,16 @@ template <typename T> std::vector<T> rosenbrock(const std::vector<T> &indep) {
 
 std::vector<double> rosenbrockDeriv(const std::vector<double> &indep,
                                     std::size_t order, std::size_t dir,
-                                    std::size_t comp = 1) {
+                                    std::size_t comp = 0) {
   const std::size_t n = indep.size();
 
   if (order < 1)
     throw std::invalid_argument("order must be >= 1");
 
-  if (dir < 1 || dir > n)
-    throw std::invalid_argument("dir must be between 1 and indep.size()");
+  if (dir >= n)
+    throw std::invalid_argument("dir must be between 0 and indep.size() - 1");
 
   std::vector<double> result(n, 0.0);
-
-  const std::size_t d = dir - 1;
 
   // Ordinary gradient
   if (order == 1) {
@@ -116,7 +114,7 @@ std::vector<double> rosenbrockDeriv(const std::vector<double> &indep,
     const double x = indep[i];
     const double y = indep[i + 1];
 
-    if (d == i) {
+    if (dir == i) {
       // D_x^k f_i, followed by the gradient.
 
       switch (order) {
@@ -135,7 +133,7 @@ std::vector<double> rosenbrockDeriv(const std::vector<double> &indep,
         result[i] += 2400.0;
         break;
       }
-    } else if (d == i + 1) {
+    } else if (dir == i + 1) {
       // Differentiating with respect to y.
 
       switch (order) {
@@ -161,7 +159,7 @@ template <typename T> std::vector<T> expsinlog(const std::vector<T> &indep) {
 }
 
 std::vector<double> expsinlogDeriv(const std::vector<double> &indep,
-                                   std::size_t n, std::size_t dir = 1,
+                                   std::size_t n, std::size_t dir = 0,
                                    std::size_t comp = 0) {
   int order = n;
 
@@ -204,11 +202,7 @@ template <typename T> std::vector<T> Cosines(const std::vector<T> &indep) {
 std::vector<double> CosinesDeriv(const std::vector<double> &indep,
                                  std::size_t order, std::size_t dir,
                                  std::size_t comp) {
-  assert(order >= 1 && dir >= 1 && dir <= indep.size() && comp >= 1 &&
-         comp <= indep.size());
-  /* int order = static_cast<int>(order1);
-  int dir = static_cast<int>(dir1);
-  int comp = static_cast<int>(comp1); */
+  assert(order >= 1 && dir < indep.size() && comp < indep.size());
 
   // Set up solution
   std::vector<double> gradient(indep.size(), 0.0);
@@ -217,7 +211,7 @@ std::vector<double> CosinesDeriv(const std::vector<double> &indep,
   }
   // Get sum of components
   double sum{0};
-  for (size_t i = 0; i < comp; i++) {
+  for (size_t i = 0; i <= comp; i++) {
     sum += indep[i];
   }
 
@@ -226,28 +220,27 @@ std::vector<double> CosinesDeriv(const std::vector<double> &indep,
   double rightVal;
   switch (order % 4) {
   case 0:
-    leftVal = std::cos(sum) * indep[comp - 1];
+    leftVal = std::cos(sum) * indep[comp];
     rightVal = std::sin(sum);
     break;
   case 1:
-    leftVal = -1 * std::sin(sum) * indep[comp - 1];
+    leftVal = -1 * std::sin(sum) * indep[comp];
     rightVal = std::cos(sum);
     break;
   case 2:
-    leftVal = -1 * std::cos(sum) * indep[comp - 1];
+    leftVal = -1 * std::cos(sum) * indep[comp];
     rightVal = -1 * std::sin(sum);
     break;
   case 3:
-    leftVal = std::sin(sum) * indep[comp - 1];
+    leftVal = std::sin(sum) * indep[comp];
     rightVal = -1 * std::cos(sum);
     break;
   default:
-    std::cout << "C++ sucks balls." << std::endl;
     break;
   }
 
   // Calculate Derivatives by cases
-  for (size_t i = 0; i < comp - 1; i++) {
+  for (size_t i = 0; i < comp; i++) {
     if (dir < comp) {
       gradient[i] = leftVal;
     } else {
@@ -255,9 +248,9 @@ std::vector<double> CosinesDeriv(const std::vector<double> &indep,
     }
   }
   if (dir < comp) {
-    gradient[comp - 1] = leftVal + rightVal;
+    gradient[comp] = leftVal + rightVal;
   } else {
-    gradient[comp - 1] = leftVal + order * rightVal;
+    gradient[comp] = leftVal + order * rightVal;
   }
 
   return gradient;
@@ -274,8 +267,7 @@ template <typename T> std::vector<T> Sines(const std::vector<T> &indep) {
 std::vector<double> SinesDeriv(const std::vector<double> &indep,
                                std::size_t order1, std::size_t dir1,
                                std::size_t comp1) {
-  assert(order1 >= 1 && dir1 >= 1 && dir1 <= indep.size() && comp1 >= 1 &&
-         comp1 <= indep.size());
+  assert(order1 >= 1 && dir1 < indep.size() && comp1 < indep.size());
   int order = static_cast<int>(order1);
   int dir = static_cast<int>(dir1);
   int comp = static_cast<int>(comp1);
@@ -284,16 +276,16 @@ std::vector<double> SinesDeriv(const std::vector<double> &indep,
   if (dir == comp) {
     switch (order % 4) {
     case 0:
-      result[dir - 1] = std::sin(indep[dir - 1]);
+      result[dir] = std::sin(indep[dir]);
       break;
     case 1:
-      result[dir - 1] = std::cos(indep[dir - 1]);
+      result[dir] = std::cos(indep[dir]);
       break;
     case 2:
-      result[dir - 1] = -1 * std::sin(indep[dir - 1]);
+      result[dir] = -1 * std::sin(indep[dir]);
       break;
     case 3:
-      result[dir - 1] = -1 * std::cos(indep[dir - 1]);
+      result[dir] = -1 * std::cos(indep[dir]);
       break;
     }
   }
