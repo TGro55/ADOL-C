@@ -100,8 +100,9 @@ struct BenchmarkData {
   }
   bool comparable(const BenchmarkData &other) const {
     for (size_t i = 0; i < categories.size(); i++) {
-      if (categories[i] != other.categories[i])
+      if (categories[i] != other.categories[i]) {
         return false;
+      }
     }
     for (const auto &[key, value] : function_data_map) {
       if (!other.function_data_map.contains(key)) {
@@ -250,6 +251,8 @@ struct BenchmarkData {
     }
 
     if (!toleranceCheck(*this, other)) {
+      std::cout << "Comparison tables failed tolerance check for errors."
+                << std::endl;
       return false;
     }
 

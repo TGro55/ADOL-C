@@ -23,8 +23,8 @@ int main(int argc, char *argv[]) {
   }
 
   // BenchmarkProblems
-  BenchmarkProblem cosines = {100,
-                              100,
+  BenchmarkProblem cosines = {1000,
+                              1000,
                               10,
                               "cosines",
                               benchmarkFunctions::Cosines<adouble>,
@@ -37,13 +37,20 @@ int main(int argc, char *argv[]) {
                                 benchmarkFunctions::expsinlog<adouble>,
                                 benchmarkFunctions::expsinlog<double>,
                                 benchmarkFunctions::expsinlogDeriv};
-  BenchmarkProblem rosenbrock = {10000,
+  BenchmarkProblem rosenbrock = {100000,
                                  1,
                                  4,
                                  "rosenbrock",
                                  benchmarkFunctions::rosenbrock<adouble>,
                                  benchmarkFunctions::rosenbrock<double>,
                                  benchmarkFunctions::rosenbrockDeriv};
+
+  /* BenchmarkProblem cosines = {100, 100, 10, "cosines",
+                              benchmarkFunctions::Cosines<adouble>};
+  BenchmarkProblem expsinlog = {1, 1, 10, "expsinlog",
+                                benchmarkFunctions::expsinlog<adouble>};
+  BenchmarkProblem rosenbrock = {10000, 1, 4, "rosenbrock",
+                                 benchmarkFunctions::rosenbrock<adouble>}; */
 
   // Registering the Problems
   Benchmark::registerProblem(rosenbrock.functionName, rosenbrock, outputFile);
