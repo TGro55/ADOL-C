@@ -1,0 +1,9 @@
+# Ignore executables
+benchmark
+
+# Ignore (local) library
+lib
+include
+
+# Ignore (local) results
+benchmark_results.txt
